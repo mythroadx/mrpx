@@ -1,0 +1,220 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    outputs:
+      valid: ${{ steps.check.outputs.valid }}
+    steps:
+      - id: check
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $valid = $env:TAG -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          "valid=$($valid.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          if (!$valid) { Write-Host 'Not a stable vX.Y.Z tag; release jobs are skipped.' }
+
+  native:
+    needs: tag
+    if: needs.tag.outputs.valid == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows
+            unicorn_lib: deps/unicorn/build/libunicorn-static.a
+          - os: ubuntu-24.04
+            platform: linux
+            unicorn_lib: deps/unicorn/build/libunicorn-static.a
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.ref_name }}
+      UNICORN_ROOT: deps/unicorn
+      UNICORN_BUILD_DIR: deps/unicorn/build
+      UNICORN_LIB: ${{ matrix.unicorn_lib }}
+      SDL2_ROOT: deps/SDL2-2.32.10/x86_64-w64-mingw32
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          if (!$env:MSYS2_LOCATION) { throw 'MSYS2 installation location is missing.' }
+          (Join-Path $env:MSYS2_LOCATION 'usr\bin') >> $env:GITHUB_PATH
+          (Join-Path $env:MSYS2_LOCATION 'mingw64\bin') >> $env:GITHUB_PATH
+      - if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libsdl2-dev libgtk-4-dev xvfb dbus-x11
+      - name: Prepare fixed native SDKs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          Get-Command make, gcc, cmake, sh | Select-Object Name, Source | Format-Table
+          if ($IsWindows -and (gcc -dumpmachine).Trim() -ne 'x86_64-w64-mingw32') {
+            throw 'Wrong Windows compiler architecture.'
+          }
+          $env:SOURCE_DATE_EPOCH = (git log -1 --format=%ct).Trim()
+          "SOURCE_DATE_EPOCH=$env:SOURCE_DATE_EPOCH" >> $env:GITHUB_ENV
+          make native-deps JOBS=4
+      - name: Build and test native runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($IsWindows) {
+            $env:PATH = (Join-Path $PWD "$env:SDL2_ROOT/bin") + ';' + $env:PATH
+          }
+          make main test test-mrp test-startup test-build
+          if ($IsWindows) {
+            make test-controls
+          } else {
+            dbus-run-session -- xvfb-run -a env GSK_RENDERER=cairo make test-controls
+          }
+      - name: Package SDK-backed native app
+        shell: pwsh
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: make package "VERSION=$env:TAG" "PLATFORM=$env:PLATFORM"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: build/releases/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  wasm:
+    needs: tag
+    if: needs.tag.outputs.valid == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.ref_name }}
+      EM_CACHE: ${{ github.workspace }}/build/emscripten-cache
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.6'
+          cache: false
+      - name: Install Linux build tools and fixed Emscripten
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build unzip
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git deps/emsdk
+          python3 deps/emsdk/emsdk.py install 6.0.12
+          python3 deps/emsdk/emsdk.py activate 6.0.12
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Build and test WASM
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deps/emsdk/emsdk_env.sh
+          export PATH="$(dirname "$EMSDK_NODE"):$PATH"
+          make web-deps
+          make prepare-web-audio
+          make wasm-unicorn WASM_CMAKE=cmake JOBS=4
+          make wasm
+          make test-wasm-unicorn test-web-controls test-web-audio test-catalog test-web-catalog test-build test-package test-go
+      - name: Real browser MRP and AudioWorklet tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 18766 --bind 127.0.0.1 >build/browser-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          make test-browser BROWSER_URL=http://127.0.0.1:18766
+      - name: Package static site and both embedded servers
+        shell: pwsh
+        run: make package "VERSION=$env:TAG" PLATFORM=wasm
+      - name: Verify the packaged embedded server without external site files
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q "build/releases/mrpx-$TAG-wasm.zip" -d build/embed-check
+          server="build/embed-check/mrpx-$TAG-wasm/mrpx-web-linux-amd64"
+          test -x "$server"
+          mv "build/embed-check/mrpx-$TAG-wasm/web" build/embed-check/static-site
+          "$server" -listen 127.0.0.1:18807 >build/embed-check/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          curl --fail --retry 5 --retry-connrefused --retry-delay 1 \
+            http://127.0.0.1:18807/mrpx.wasm -o build/embed-check/served.wasm
+          cmp build/web/mrpx.wasm build/embed-check/served.wasm
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wasm
+          path: build/releases/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [tag, native, wasm]
+    if: needs.tag.outputs.valid == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Install archive validator
+        run: sudo apt-get update && sudo apt-get install -y unzip
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Verify all release artifacts and publish atomically as a draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=("mrpx-$TAG-windows-amd64.zip" "mrpx-$TAG-linux-amd64.zip" "mrpx-$TAG-wasm.zip")
+          for file in "${expected[@]}"; do
+            test -s "artifacts/$file"
+            unzip -t "artifacts/$file"
+          done
+          cd artifacts
+          sha256sum "${expected[@]}" > SHA256SUMS.txt
+          gh release create "$TAG" "${expected[@]}" SHA256SUMS.txt \
+            --verify-tag --draft --title "mrpx $TAG" --generate-notes
+          gh release edit "$TAG" --draft=false

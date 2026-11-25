@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<base href="../build/web/">
+<title>mrpx MIDI audio test</title>
+<button id="run">Run real AudioWorklet test</button>
+<pre id="result">Click Run to allow audio.</pre>
+<script src="./midi.js"></script>
+<script>
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function testMidi() {
+    return Uint8Array.from([
+        77,84,104,100,0,0,0,6,0,0,0,1,0,96,
+        77,84,114,107,0,0,0,23,
+        0,176,91,0,0,176,93,0,0,192,16,0,144,60,100,96,128,60,0,0,255,47,0,
+    ]).buffer;
+}
+document.querySelector("#run").onclick = async function () {
+    this.disabled = true;
+    const errors = [];
+    let context, player;
+    try {
+        context = new AudioContext();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        const silent = context.createGain();
+        silent.gain.value = 0;
+        analyser.connect(silent).connect(context.destination);
+        player = MidiPlayer({
+            createContext: () => context,
+            loadLibrary: async () => {
+                const library = await import("./vendor/spessasynth/index.js");
+                return {
+                    ...library,
+                    WorkletSynthesizer: class extends library.WorkletSynthesizer {
+                        connect(output) {
+                            output.connect(analyser);
+                            return super.connect(output);
+                        }
+                    },
+                };
+            },
+            onError: error => errors.push(error.message),
+            onStateChange: state => {
+                if (!document.body.dataset.result) document.querySelector("#result").textContent = state;
+            },
+        });
+        const samples = new Float32Array(analyser.fftSize);
+        function peak() {
+            analyser.getFloatTimeDomainData(samples);
+            if (!samples.every(Number.isFinite)) throw new Error("Non-finite audio samples");
+            return samples.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+        }
+        const enabled = await Promise.race([
+            player.enable(),
+            sleep(20000).then(() => { throw new Error("Audio initialization exceeded 20 seconds"); }),
+        ]);
+        if (!enabled) throw new Error(errors.join("\n"));
+        if (player.play(testMidi(), false) !== 0) throw new Error("Play rejected");
+        await sleep(250);
+        const playing = peak();
+        if (playing < 0.001) throw new Error(`Silent synthesizer: ${playing}`);
+        await sleep(3750);
+        const ended = peak();
+        if (ended > 0.000001) throw new Error(`Single playback did not finish: ${ended}`);
+        if (player.play(testMidi(), true) !== 0) throw new Error("Looping play rejected");
+        await sleep(4000);
+        const looping = peak();
+        if (looping < 0.001) throw new Error(`Loop did not continue: ${looping}`);
+        player.stop();
+        await sleep(150);
+        const stopped = peak();
+        if (stopped > 0.000001) throw new Error(`Stop did not mute output: ${stopped}`);
+        if (errors.length) throw new Error(errors.join("\n"));
+        document.querySelector("#result").textContent = JSON.stringify({playing, ended, looping, stopped});
+        document.title = "PASS: mrpx MIDI AudioWorklet";
+        document.body.dataset.result = "passed";
+    } catch (error) {
+        document.querySelector("#result").textContent = error.stack;
+        document.title = "FAIL: mrpx MIDI AudioWorklet";
+        document.body.dataset.result = "failed";
+    } finally {
+        if (player) player.stop();
+        if (context) await context.close();
+    }
+};
+</script>
+</html>

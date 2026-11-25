@@ -1,0 +1,229 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 85f736cc..45b85580 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -165,7 +165,15 @@ if(MSVC)
+         string(REGEX REPLACE "[/-]M[TD]d?" "" CMAKE_C_FLAGS ${CMAKE_C_FLAGS})
+     endif()
+ else()
+-    if(MINGW)
++    if(EMSCRIPTEN)
++        if(NOT UNICORN_ARCH STREQUAL "arm")
++            message(FATAL_ERROR "The VMRP WebAssembly build supports ARM only.")
++        endif()
++        if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
++            message(FATAL_ERROR "The TCI port requires wasm32.")
++        endif()
++        set(UNICORN_TARGET_ARCH "wasm32")
++    elseif(MINGW)
+         execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpmachine
+             OUTPUT_VARIABLE UC_COMPILER_VERSION)
+ 
+@@ -370,6 +378,19 @@ else()
+     endif()
+     set(TARGET_LIST "${TARGET_LIST} ")
+ 
++    if(EMSCRIPTEN)
++        # Emscripten is not a POSIX host: native executable probes are invalid.
++        file(WRITE ${CMAKE_BINARY_DIR}/config-host.h
++            "#define CONFIG_POSIX 1\n#define CONFIG_TCG 1\n"
++            "#define QEMU_VERSION \"5.0.1\"\n#define QEMU_VERSION_MAJOR 5\n"
++            "#define QEMU_VERSION_MINOR 0\n#define QEMU_VERSION_MICRO 1\n"
++            "#define HOST_DSOSUF \".so\"\n")
++        file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/arm-softmmu)
++        file(WRITE ${CMAKE_BINARY_DIR}/arm-softmmu/config-target.h
++            "#define TARGET_ARM 1\n#define TARGET_NAME \"arm\"\n"
++            "#define TARGET_SYSTBL_ABI common,oabi\n#define CONFIG_SOFTMMU 1\n"
++            "#define TARGET_SUPPORTS_MTTCG 1\n")
++    else()
+     # GEN config-host.mak & target directories
+     # MESSAGE(STATUS "sh ${CMAKE_CURRENT_SOURCE_DIR}/qemu/configure
+     #     --cc=${CMAKE_C_COMPILER}
+@@ -382,7 +403,11 @@ else()
+         ${EXTRA_CFLAGS}
+         ${TARGET_LIST}
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
++        RESULT_VARIABLE QEMU_CONFIGURE_RESULT
+     )
++    if(NOT QEMU_CONFIGURE_RESULT EQUAL 0)
++        message(FATAL_ERROR "QEMU configure failed: ${QEMU_CONFIGURE_RESULT}")
++    endif()
+     execute_process(COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/qemu/scripts/create_config
+         INPUT_FILE ${CMAKE_BINARY_DIR}/config-host.mak
+         OUTPUT_FILE ${CMAKE_BINARY_DIR}/config-host.h
+@@ -471,6 +496,7 @@ else()
+             OUTPUT_FILE ${CMAKE_BINARY_DIR}/tricore-softmmu/config-target.h
+         )
+     endif()
++    endif()
+     add_compile_options(
+         ${UNICORN_CFLAGS}
+         -I${CMAKE_CURRENT_SOURCE_DIR}/qemu/tcg/tci
+diff --git a/include/unicorn/unicorn.h b/include/unicorn/unicorn.h
+index 78c48eea..b4ffc6bc 100644
+--- a/include/unicorn/unicorn.h
++++ b/include/unicorn/unicorn.h
+@@ -443,9 +443,8 @@ typedef enum uc_hook_type {
+   @size: size of data being read or written
+   @value: value of data being written to memory, or irrelevant if type = READ.
+   @user_data: user data passed to tracing APIs
+-  @return: it doesn't matter, just to make webassembly happy
+ */
+-typedef bool (*uc_cb_hookmem_t)(uc_engine *uc, uc_mem_type type,
++typedef void (*uc_cb_hookmem_t)(uc_engine *uc, uc_mem_type type,
+                                 uint64_t address, int size, int64_t value,
+                                 void *user_data);
+ 
+diff --git a/qemu/configure b/qemu/configure
+index 492e9b07..9d02e38b 100644
+--- a/qemu/configure
++++ b/qemu/configure
+@@ -53,7 +53,7 @@ print_error() {
+ 
+ error_exit() {
+     print_error "$@"
+-    #exit 1
++    exit 1
+ }
+ 
+ do_compiler() {
+diff --git a/qemu/include/tcg/tcg-op.h b/qemu/include/tcg/tcg-op.h
+index 961f7d6f..2aa4d6a4 100644
+--- a/qemu/include/tcg/tcg-op.h
++++ b/qemu/include/tcg/tcg-op.h
+@@ -35,6 +35,7 @@ static inline void gen_uc_tracecode(TCGContext *tcg_ctx, int32_t size, int32_t t
+     TCGv_i32 ttype;
+     TCGv_ptr tuc = tcg_const_ptr(tcg_ctx, uc);
+     TCGv_i64 tpc = tcg_const_i64(tcg_ctx, pc);
++#ifndef __EMSCRIPTEN__
+     TCGv_ptr tdata;
+     uc_engine* puc = uc;
+     struct list_item *cur;
+@@ -47,7 +48,6 @@ static inline void gen_uc_tracecode(TCGContext *tcg_ctx, int32_t size, int32_t t
+     };
+ 
+     const int hook_type = type & UC_HOOK_IDX_MASK;
+-#ifndef __EMSCRIPTEN__
+     if (puc->hooks_count[hook_type] == 1 && !(type & UC_HOOK_FLAG_NO_STOP)) {
+         cur = puc->hook[hook_type].head;
+         
+diff --git a/qemu/target/arm/helper.c b/qemu/target/arm/helper.c
+index 60c9db9e..0e285f63 100644
+--- a/qemu/target/arm/helper.c
++++ b/qemu/target/arm/helper.c
+@@ -4702,7 +4702,6 @@ static const ARMCPRegInfo el3_no_el2_cp_reginfo[] = {
+       .access = PL2_RW,
+       .readfn = arm_cp_read_zero, .writefn = arm_cp_write_ignore },
+     { .name = "HCR_EL2", .state = ARM_CP_STATE_BOTH,
+-      .type = ARM_CP_NO_RAW,
+       .opc0 = 3, .opc1 = 4, .crn = 1, .crm = 1, .opc2 = 0,
+       .access = PL2_RW,
+       .type = ARM_CP_CONST, .resetvalue = 0 },
+diff --git a/qemu/target/arm/neon_helper.c b/qemu/target/arm/neon_helper.c
+index 0c2828e6..91d2c966 100644
+--- a/qemu/target/arm/neon_helper.c
++++ b/qemu/target/arm/neon_helper.c
+@@ -1006,10 +1006,8 @@ uint64_t HELPER(neon_qrshl_u64)(CPUARMState *env, uint64_t val, uint64_t shiftop
+     if (tmp >= (ssize_t)sizeof(src1) * 8) { \
+         if (src1) { \
+             SET_QC(); \
+-            dest = (1 << (sizeof(src1) * 8 - 1)); \
+-            if (src1 > 0) { \
+-                dest--; \
+-            } \
++            dest = src1 > 0 ? (1 << (sizeof(src1) * 8 - 1)) - 1 \
++                           : -(1 << (sizeof(src1) * 8 - 1)); \
+         } else { \
+             dest = 0; \
+         } \
+@@ -1021,10 +1019,8 @@ uint64_t HELPER(neon_qrshl_u64)(CPUARMState *env, uint64_t val, uint64_t shiftop
+         dest = src1 << tmp; \
+         if ((dest >> tmp) != src1) { \
+             SET_QC(); \
+-            dest = (uint32_t)(1 << (sizeof(src1) * 8 - 1)); \
+-            if (src1 > 0) { \
+-                dest--; \
+-            } \
++            dest = src1 > 0 ? (1 << (sizeof(src1) * 8 - 1)) - 1 \
++                           : -(1 << (sizeof(src1) * 8 - 1)); \
+         } \
+     }} while (0)
+ NEON_VOP_ENV(qrshl_s8, neon_s8, 4)
+diff --git a/qemu/tcg/tcg.c b/qemu/tcg/tcg.c
+index 2f8bb591..82dd413a 100644
+--- a/qemu/tcg/tcg.c
++++ b/qemu/tcg/tcg.c
+@@ -130,11 +130,6 @@ static inline bool tcg_out_dupm_vec(TCGContext *s, TCGType type, unsigned vece,
+ {
+     g_assert_not_reached();
+ }
+-static inline void tcg_out_dupi_vec(TCGContext *s, TCGType type,
+-                                    TCGReg dst, tcg_target_long arg)
+-{
+-    g_assert_not_reached();
+-}
+ static inline void tcg_out_vec_op(TCGContext *s, TCGOpcode opc, unsigned vecl,
+                                   unsigned vece, const TCGArg *args,
+                                   const int *const_args)
+@@ -499,7 +494,9 @@ void tcg_region_init(TCGContext *tcg_ctx)
+     size_t page_size = tcg_ctx->uc->qemu_real_host_page_size;
+     size_t region_size;
+     size_t n_regions;
++#ifndef __EMSCRIPTEN__
+     size_t i;
++#endif
+ 
+     n_regions = 1;
+ 
+@@ -528,6 +525,8 @@ void tcg_region_init(TCGContext *tcg_ctx)
+     /* account for that last guard page */
+     tcg_ctx->region.end = (void *)((char *)tcg_ctx->region.end - page_size);
+ 
++    /* Wasm linear memory has no page protection; retain the region bounds. */
++#ifndef __EMSCRIPTEN__
+     /* set guard pages */
+     for (i = 0; i < tcg_ctx->region.n; i++) {
+         void *start, *end;
+@@ -536,6 +535,7 @@ void tcg_region_init(TCGContext *tcg_ctx)
+ 
+         (void)qemu_mprotect_none(end, page_size);
+     }
++#endif
+ 
+     tcg_ctx->tree = g_tree_new(tb_tc_cmp);
+     // Unicorn: Though this code is taken from CONFIG_USER_ONLY, it is crucial or
+diff --git a/qemu/tcg/tci.c b/qemu/tcg/tci.c
+index f9d25d4d..28ac87e6 100644
+--- a/qemu/tcg/tci.c
++++ b/qemu/tcg/tci.c
+@@ -130,11 +130,13 @@ static void tci_write_reg8(tcg_target_ulong *regs, TCGReg index, uint8_t value)
+     tci_write_reg(regs, index, value);
+ }
+ 
++#if TCG_TARGET_REG_BITS == 64
+ static void
+ tci_write_reg16(tcg_target_ulong *regs, TCGReg index, uint16_t value)
+ {
+     tci_write_reg(regs, index, value);
+ }
++#endif
+ 
+ static void
+ tci_write_reg32(tcg_target_ulong *regs, TCGReg index, uint32_t value)
+diff --git a/qemu/util/oslib-posix.c b/qemu/util/oslib-posix.c
+index 8834b967..541b3019 100644
+--- a/qemu/util/oslib-posix.c
++++ b/qemu/util/oslib-posix.c
+@@ -32,8 +32,12 @@
+ #ifdef CONFIG_LINUX
+ #include <linux/mman.h>
+ #else  /* !CONFIG_LINUX */
++#ifndef MAP_SYNC
+ #define MAP_SYNC              0x0
++#endif
++#ifndef MAP_SHARED_VALIDATE
+ #define MAP_SHARED_VALIDATE   0x0
++#endif
+ #endif /* CONFIG_LINUX */
+ 
+ #ifndef __MINGW32__

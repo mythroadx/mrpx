@@ -1,0 +1,8 @@
+# Keep only the original format-analysis fixtures, not new compiler outputs.
+!/cfunction.ext
+!/cfunction_thumb.ext
+!/mr_cfunction.ext
+!/mr_cfunction_thumb.ext
+*.fmt
+!/mr_cfunction.fmt
+!/mr_cfunction_thumb.fmt

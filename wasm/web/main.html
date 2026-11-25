@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f3f5f9">
+    <meta name="description" content="经典 MRP 资源目录、自动预览与原仓库下载链接，以及 mrpx WebAssembly 模拟器工作台。">
+    <title>mrpx · MRP 资源目录与模拟器</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./midi.js"></script>
+    <script src="./catalog.js" defer></script>
+</head>
+
+<body>
+    <div id="main" class="app-shell">
+        <header class="app-header">
+            <a class="brand" href="./main.html" aria-label="mrpx 首页">
+                <span class="brand-mark" aria-hidden="true">M</span>
+                <span>mrpx <small>WORKSPACE</small></span>
+            </a>
+            <div class="header-actions">
+                <span class="engine-badge">WebAssembly</span>
+                <input type="file" id="files" multiple hidden>
+                <button type="button" id="import" class="button-primary" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 15v5h16v-5"/></svg>
+                    导入文件
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <section class="intro" aria-labelledby="pageTitle">
+                <div>
+                    <p class="eyebrow">A LITTLE SCREEN. A FAMILIAR WORLD.</p>
+                    <h1 id="pageTitle">小小屏幕，<span>熟悉的世界。</span></h1>
+                    <p class="intro-description">在浏览器里，重新点亮经典 MRP 应用。</p>
+                </div>
+                <div class="runtime-summary">
+                    <span id="runtimeState" data-state="loading" role="status">等待启动</span>
+                    <span class="runtime-engine">Unicorn · ARM / Thumb</span>
+                </div>
+            </section>
+
+            <section id="catalog" class="panel catalog-panel" aria-labelledby="catalogTitle">
+                <div class="panel-heading">
+                    <div><p class="section-label">MRP COLLECTION</p><h2 id="catalogTitle">经典应用目录</h2></div>
+                    <a href="#workspace">打开模拟器 ↓</a>
+                </div>
+                <p class="catalog-notice">本站仅保存包信息与截图，不托管这些 MRP 包。下载跳转到
+                    <a id="catalogSource" href="https://github.com/vmrp/vmrp.github.io/tree/master/public/mrps" target="_blank" rel="noopener noreferrer">原资源仓库 ↗</a>。
+                    自动截图会过滤已知启动 Logo、音频提示及重复画面，但不保证所有截图都已进入游戏，仍需人工复核。
+                </p>
+                <div class="catalog-toolbar">
+                    <label for="catalogSearch">搜索<input id="catalogSearch" type="search" placeholder="名称、厂商、文件名或 APPID…" disabled></label>
+                    <label for="catalogFilter">预览<select id="catalogFilter" disabled><option value="all">全部应用</option><option value="previews">有截图</option><option value="unavailable">暂无截图</option></select></label>
+                </div>
+                <p id="catalogState" class="catalog-state" role="status">正在加载资源目录…</p>
+                <div id="catalogGrid" class="catalog-grid" role="list" aria-label="MRP 包列表"></div>
+                <p id="catalogEmpty" class="catalog-state" hidden>没有匹配的应用，请调整搜索条件。</p>
+                <nav class="catalog-pagination" aria-label="资源目录分页">
+                    <button id="catalogPrevious" type="button" disabled>上一页</button>
+                    <span id="catalogPage">—</span>
+                    <button id="catalogNext" type="button" disabled>下一页</button>
+                </nav>
+            </section>
+
+            <div class="runtime-banner">
+                <span class="banner-label">RUNTIME</span>
+                <span id="status" role="status">正在加载运行资源…</span>
+                <progress value="0" max="100" id="progress" aria-label="运行资源加载进度"></progress>
+            </div>
+
+            <div id="workspace" class="workspace">
+                <section class="panel emulator-panel" aria-labelledby="previewTitle">
+                    <div class="panel-heading">
+                        <div><p class="section-label">EMULATOR</p><h2 id="previewTitle">实时预览</h2></div>
+                        <span class="resolution-badge">240 × 320</span>
+                    </div>
+                    <div class="emulator-layout">
+                        <div class="device">
+                            <div class="device-top" aria-hidden="true"><span class="speaker"></span><span class="device-led"></span></div>
+                            <div id="screen">
+                                <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1" aria-label="MRP 应用屏幕"></canvas>
+                                <div id="dialog" role="dialog" aria-labelledby="dialogTitle">
+                                    <h1 id="dialogTitle">标题</h1>
+                                    <textarea aria-label="MRP 对话框内容"></textarea>
+                                    <div class="control">
+                                        <button type="button" id="dialogOk">确定</button>
+                                        <span id="dialogInfo">0/0</span>
+                                        <button type="button" id="dialogCancel">取消</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="device-bottom" aria-hidden="true"><span>mrpx</span><span>VIRTUAL DEVICE</span></div>
+                        </div>
+                        <div class="keypad-panel">
+                            <div class="keypad-heading"><h3>手机键盘</h3><span>21 KEYS</span></div>
+                            <div id="keymap" role="group" aria-label="虚拟手机键盘">
+                                <button id="key_sleft" class="key-soft">左软键<span>Q / [</span></button>
+                                <button id="key_up" aria-label="向上">↑</button>
+                                <button id="key_sright" class="key-soft">右软键<span>E / ]</span></button>
+                                <button id="key_left" aria-label="向左">←</button>
+                                <button id="key_ok" class="key-confirm">OK</button>
+                                <button id="key_right" aria-label="向右">→</button>
+                                <button id="key_send" class="key-call">接听<span>TAB</span></button>
+                                <button id="key_down" aria-label="向下">↓</button>
+                                <button id="key_power" class="key-end">挂机<span>ESC</span></button>
+                                <button id="key_1">1</button><button id="key_2">2</button><button id="key_3">3</button>
+                                <button id="key_4">4</button><button id="key_5">5</button><button id="key_6">6</button>
+                                <button id="key_7">7</button><button id="key_8">8</button><button id="key_9">9</button>
+                                <button id="key_star">*<span>−</span></button><button id="key_0">0</button><button id="key_pound">#<span>=</span></button>
+                            </div>
+                            <p class="keypad-hint">鼠标、触摸或电脑键盘<br>支持长按，松开即释放</p>
+                        </div>
+                    </div>
+                    <div class="session-note">
+                        <span class="note-icon" aria-hidden="true">i</span>
+                        <div><strong>当前会话 · 临时存储</strong><p>刷新会重置所有文件。导入后，可在应用内退出并重新进入列表以刷新。</p></div>
+                    </div>
+                </section>
+
+                <div class="side-panels">
+                    <section id="console" class="panel console-panel" aria-labelledby="consoleTitle">
+                        <div class="panel-heading">
+                            <div><p class="section-label">APPLICATION I/O</p><h2 id="consoleTitle">Console<span class="console-dot" aria-hidden="true"></span></h2></div>
+                            <div class="console-actions">
+                                <button type="button" id="consoleClear" class="button-quiet">清空日志</button>
+                                <button type="button" id="consoleCopy" class="button-quiet">复制日志</button>
+                            </div>
+                        </div>
+                        <div class="terminal-heading"><span><span class="terminal-dot"></span>输出日志</span><span>READ ONLY</span></div>
+                        <textarea id="consoleOutput" readonly spellcheck="false" aria-label="MRP 和模拟器日志"></textarea>
+                        <div class="console-input-heading"><span>应用交互</span><kbd>Ctrl + Enter</kbd></div>
+                        <label id="consolePrompt" for="consoleInput" aria-live="polite">应用当前未等待输入</label>
+                        <textarea id="consoleInput" disabled aria-label="MRP 文本输入" placeholder="应用请求输入后，可在这里填写内容…"></textarea>
+                        <input id="consolePassword" type="password" hidden disabled aria-label="MRP 密码输入" autocomplete="off" placeholder="请输入应用请求的密码">
+                        <div class="console-footer">
+                            <span>MRP 编辑框接口，非命令行</span>
+                            <div class="input-actions">
+                                <button type="button" id="consoleCancel" disabled>取消</button>
+                                <button type="button" id="consoleSubmit" class="button-primary" disabled>提交输入</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="audio" class="panel audio-panel" aria-labelledby="audioTitle">
+                        <div class="audio-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="m11 5-6 4H2v6h3l6 4V5Zm4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+                        </div>
+                        <div class="audio-copy"><h2 id="audioTitle">让回忆有声音</h2><p id="audioStatus" role="status">声音未启用</p></div>
+                        <button type="button" id="audioEnable">启用 / 恢复声音</button>
+                    </section>
+                </div>
+            </div>
+
+            <details class="help-panel">
+                <summary><span>键盘快捷键与使用说明</span><span class="help-summary">从这里开始熟悉你的模拟器</span></summary>
+                <div class="help-content">
+                    <div><h3>方向与确认</h3><p><kbd>↑ ↓ ← →</kbd> 或 <kbd>W A S D</kbd> 控制方向<br><kbd>Enter</kbd> 确认 / 选择</p></div>
+                    <div><h3>数字与软键</h3><p><kbd>0–9</kbd> 数字键 · <kbd>−</kbd> * · <kbd>=</kbd> #<br><kbd>Q / [</kbd> 左软键 · <kbd>E / ]</kbd> 右软键</p></div>
+                    <div><h3>接听与挂机</h3><p><kbd>Tab</kbd> 接听 · <kbd>Esc</kbd> 挂机<br>先点击应用屏幕，再使用电脑键盘。</p></div>
+                    <div><h3>文件与音频</h3><p>导入文件只保存在当前会话；请自行备份。<br>MIDI 需先点击启用声音，不支持发送短信。</p></div>
+                </div>
+            </details>
+        </main>
+
+        <footer class="app-footer">
+            <span>mrpx <span class="footer-divider">/</span> 经典内核，新的体验。</span>
+            <nav aria-label="项目信息">
+                <span>GPL-3.0</span>
+                <a href="https://github.com/vmrp/vmrp" target="_blank" rel="noopener noreferrer">原仓库 ↗</a>
+                <a href="https://github.com/zengming00/vmrp" target="_blank" rel="noopener noreferrer">历史项目 ↗</a>
+                <a href="https://github.com/spessasus/spessasynth_lib" target="_blank" rel="noopener noreferrer">SpessaSynth + GeneralUser GS</a>
+            </nav>
+        </footer>
+    </div>
+    <script>
+        function GetQueryString(name) {
+            var reg = new RegExp("(^|&)" + name + "=([^&]*)(&|$)");
+            var r = window.location.search.substr(1).match(reg);
+            if (r != null) return decodeURI(r[2]);
+            return null;
+        }
+
+        const dialog = document.getElementById('dialog');
+        const dialogTextarea = document.querySelector('#dialog textarea');
+        const dialogTitle = document.querySelector('#dialog h1');
+        const dialogOkBtn = document.getElementById('dialogOk');
+        const dialogCancelBtn = document.getElementById('dialogCancel');
+        const dialogInfo = document.getElementById('dialogInfo');
+        const importBtn = document.getElementById('import');
+        const inputFile = document.getElementById('files');
+        const canvas = document.getElementById('canvas');
+
+        importBtn.addEventListener("click", function (ev) {
+            inputFile.click();
+        });
+        inputFile.addEventListener('change', function (ev) {
+            for (const file of inputFile.files) {
+                console.log(file);
+                const reader = new FileReader();
+                reader.onerror = function () {
+                    console.log("error", reader.error);
+                }
+                reader.onload = function () {
+                    FS.writeFile('/mythroad/' + file.name, new Uint8Array(reader.result));
+                    print("写入:'" + file.name + "'完成.");
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        const audioEnable = document.getElementById('audioEnable');
+        const midi = MidiPlayer({
+            onError(error) {
+                console.error('MIDI:', error);
+                vmrpConsoleLog('MIDI: ' + error.message);
+            },
+            onStateChange(text) {
+                document.getElementById('audioStatus').textContent = text;
+            },
+        });
+        audioEnable.addEventListener('click', async () => {
+            audioEnable.disabled = true;
+            try {
+                await midi.enable();
+            } finally {
+                audioEnable.disabled = false;
+            }
+        });
+        window.addEventListener('pagehide', () => midi.stop());
+        const MR_SOUND_MIDI = 0;
+        const MR_SOUND_WAV = 1;
+        const MR_SOUND_MP3 = 2;
+        function js_playSound(type, data, dataLen, loop) {
+            if (type == MR_SOUND_MIDI) {
+                const buf = Module.HEAPU8.slice(data, data + dataLen);
+                return midi.play(buf.buffer, loop);
+            } else {
+                console.log(arguments);
+            }
+            return 0;
+        }
+
+        function js_stopSound(type) {
+            if (type == MR_SOUND_MIDI) {
+                return midi.stop();
+            } else {
+                console.log(arguments);
+            }
+            return 0;
+        }
+
+        let shakef = 0;
+        let shakeStartTime = 0;
+
+        function js_startShake(ms) {
+            shakeStartTime = Date.now();
+            shakef = setInterval(() => {
+                if (Date.now() - shakeStartTime >= ms) {
+                    js_stopShake();
+                    return;
+                }
+                if (canvas.style.marginLeft === '-121px') {
+                    canvas.style.marginLeft = '-119px';
+                } else {
+                    canvas.style.marginLeft = '-121px';
+                }
+            }, 1);
+            return 0;
+        }
+
+        function js_stopShake() {
+            if (shakef) {
+                clearInterval(shakef);
+                shakef = 0;
+                canvas.style.marginLeft = '-120px';
+            }
+            return 0;
+        }
+
+        const MR_DIALOG_EVENT = 6;
+        const MR_DIALOG_KEY_OK = 0; // 对话框/文本框等的"确定"键被点击(选择);
+        const MR_DIALOG_KEY_CANCEL = 1; // 对话框/文本框等的"取消"("返回")键被点击(选择);
+        const MR_DIALOG_OK = 0; // 对话框有"确定"键;
+        const MR_DIALOG_OK_CANCEL = 1; // 对话框有"确定" "取消"键;
+        const MR_DIALOG_CANCEL = 2; // 对话框有"返回"键
+        const MR_EDIT_ANY = 0;
+        const MR_EDIT_NUMERIC = 1;
+        const MR_EDIT_PASSWORD = 2;
+
+        function dialogRelease() {
+            dialog.style.visibility = 'hidden';
+            dialogOkBtn.style.visibility = 'hidden';
+            dialogCancelBtn.style.visibility = 'hidden';
+            dialogOkBtn.onclick = null;
+            dialogCancelBtn.onclick = null;
+            Module._setEventEnable(true);
+            vmrpSetModal(false);
+        }
+
+        function dialogCreate(title, text, keyType, editAble, editType, max_size) {
+            vmrpSetModal(true);
+            Module._setEventEnable(false);
+            dialog.style.visibility = 'visible';
+            dialogTitle.innerText = getUnicodeStr(title);
+            dialogTextarea.value = getUnicodeStr(text);
+            dialogTextarea.scrollTop = 0;
+            dialogTextarea.readOnly = !editAble;
+            if (dialogTextarea.readOnly) {
+                dialogInfo.innerText = '';
+            }
+            if (keyType == MR_DIALOG_OK_CANCEL || keyType == MR_DIALOG_OK) {
+                dialogOkBtn.style.visibility = 'visible';
+                dialogOkBtn.onclick = function (e) {
+                    if (editAble && getDialogText().length > max_size) {
+                        return;
+                    }
+                    dialogTextarea.readOnly = true;
+                    Module._c_event(MR_DIALOG_EVENT, MR_DIALOG_KEY_OK, 0);
+                }
+            }
+            if (keyType == MR_DIALOG_OK_CANCEL || keyType == MR_DIALOG_CANCEL) {
+                dialogCancelBtn.style.visibility = 'visible';
+                dialogCancelBtn.onclick = function (e) {
+                    Module._c_event(MR_DIALOG_EVENT, MR_DIALOG_KEY_CANCEL, 0);
+                }
+            }
+            dialogTextarea.oninput = function (e) {
+                if (editType == MR_EDIT_NUMERIC) {
+                    // todo
+                }
+                if (editAble) {
+                    updateDialogInfo(max_size);
+                }
+            };
+            if (editAble) {
+                updateDialogInfo(max_size);
+            }
+        }
+
+        function js_dialogCreate(title, text, type) {
+            dialogCreate(title, text, type, false, 0, 0);
+            return 1234;
+        }
+
+        function js_dialogRelease(dialog) {
+            dialogRelease();
+            return 0;
+        }
+
+        function js_dialogRefresh(dialog, title, text, keyType) {
+            dialogTitle.innerText = getUnicodeStr(title);
+            dialogTextarea.value = getUnicodeStr(text);
+            if (keyType == -1) return 0;
+            dialogOkBtn.style.visibility = 'hidden';
+            dialogCancelBtn.style.visibility = 'hidden';
+            dialogOkBtn.onclick = null;
+            dialogCancelBtn.onclick = null;
+            if (keyType == MR_DIALOG_OK_CANCEL || keyType == MR_DIALOG_OK) {
+                dialogOkBtn.style.visibility = 'visible';
+                dialogOkBtn.onclick = function (e) {
+                    Module._c_event(MR_DIALOG_EVENT, MR_DIALOG_KEY_OK, 0);
+                }
+            }
+            if (keyType == MR_DIALOG_OK_CANCEL || keyType == MR_DIALOG_CANCEL) {
+                dialogCancelBtn.style.visibility = 'visible';
+                dialogCancelBtn.onclick = function (e) {
+                    Module._c_event(MR_DIALOG_EVENT, MR_DIALOG_KEY_CANCEL, 0);
+                }
+            }
+            return 0;
+        }
+
+        function js_textCreate(title, text, type) {
+            dialogCreate(title, text, type, false, 0, 0);
+            return 1234;
+        }
+
+        function js_textRelease(handle) {
+            dialogRelease();
+            return 0;
+        }
+
+        function js_textRefresh(handle, title, text) {
+            dialogTitle.innerText = getUnicodeStr(title);
+            dialogTextarea.value = getUnicodeStr(text);
+            return 0;
+        }
+
+        function getUnicodeStr(p) {
+            let i = p / 2;
+            const arr = [];
+            while (Module.HEAPU16[i]) {
+                const v = Module.HEAPU16[i];
+                arr.push(String.fromCharCode((v >> 8 | v << 8) & 0xffff));
+                i++;
+            }
+            return arr.join('');
+        }
+
+        function getDialogText() {
+            let str = dialogTextarea.value;
+            str = str.replace(/\r\n/g, '\n');
+            str = str.replace(/\n/g, '\r\n');
+            return str;
+        }
+
+        function updateDialogInfo(max_size) {
+            const str = getDialogText();
+            dialogInfo.innerText = str.length + '/' + max_size;
+            if (str.length > max_size) {
+                dialogInfo.style.color = 'red';
+            } else {
+                dialogInfo.style.color = 'black';
+            }
+        }
+
+    </script>
+
+    <script type='text/javascript'>
+        var statusElement = document.getElementById('status');
+        var progressElement = document.getElementById('progress');
+        function print(text) {
+            if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+            console.log(text);
+            if (window.vmrpConsoleLog) vmrpConsoleLog(text);
+        }
+        function setTitle() {
+            const title = GetQueryString('title')
+            if (title) {
+                document.title = title;
+            }
+        }
+
+        var Module = {
+            preRun: [],
+            postRun: [setTitle],
+            print: print,
+            printErr: function (text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+                if (window.vmrpConsoleLog) vmrpConsoleLog('[stderr] ' + text);
+            },
+            canvas: (function () {
+                var canvas = document.getElementById('canvas');
+
+                // As a default initial behavior, pop up an alert when webgl context is lost. To make your
+                // application robust, you may want to override this behavior before shipping!
+                // See http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.15.2
+                canvas.addEventListener("webglcontextlost", function (e) {
+                    alert('WebGL context lost. You will need to reload the page.');
+                    e.preventDefault();
+                }, false);
+
+                return canvas;
+            })(),
+            setStatus: function (text) {
+                if (!Module.setStatus.last) Module.setStatus.last = {
+                    time: Date.now(),
+                    text: ''
+                };
+                if (text === Module.setStatus.last.text) return;
+                var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+                var now = Date.now();
+                if (m && now - Module.setStatus.last.time < 30) return; // if this is a progress update, skip it if too soon
+                Module.setStatus.last.time = now;
+                Module.setStatus.last.text = text;
+                if (m) {
+                    text = m[1];
+                    progressElement.value = parseInt(m[2]) * 100;
+                    progressElement.max = parseInt(m[4]) * 100;
+                    progressElement.style.visibility = 'visible';
+                } else {
+                    progressElement.style.visibility = 'hidden';
+                }
+                statusElement.textContent = text || '资源已就绪';
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function (left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+            }
+        };
+        Module.setStatus('Downloading...');
+        window.onerror = function (event) {
+            // TODO: do not warn on ok events like simulating an infinite loop or exitStatus
+            Module.setStatus('Exception thrown, see JavaScript console');
+            Module.setStatus = function (text) {
+                if (text) Module.printErr('[post-exception status] ' + text);
+            };
+        };
+    </script>
+    <script src="./controls.js"></script>
+    <script src="./filesystem.js"></script>
+    <script async src="./mrpx.js" onerror="Module.setStatus('WebAssembly 资源加载失败，请先执行 make wasm'); vmrpConsoleLog('无法加载 mrpx.js，请先构建 WebAssembly 运行时。')"></script>
+</body>
+
+</html>

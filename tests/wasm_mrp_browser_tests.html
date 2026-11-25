@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>mrpx WASM regression</title>
+<h1>mrpx WASM regression</h1>
+<pre id="results">Running...</pre>
+<iframe id="runtime" title="Real MRP runtime" width="680" height="1000"></iframe>
+<script>
+"use strict";
+// The launcher lists only browser-preloaded packages. Other baselines match
+// tools/mrp_regression.py, including the Guest-visible package name.
+const cases = [
+    ["launcher", null, 320, "2fdd4f4ea2d0a8ada191e2cbc5b852bfeac7e1e9e427086dab7e77c7114ae20b"],
+    ["mpc", "../../tests/fixtures/mrp/mpc.mrp", 295, "4eef29fb9c62d5997463126d04cdd6bd394637c2d3670cb72d6f19d71f71601b"],
+    ["arm", "../../tests/fixtures/mrp/asm.mrp", 320, "ab754e366aee580d18f56c612a513d05474737b57bcd26ace58f28ef61690271"],
+    ["thumb", "../../tests/fixtures/mrp/asm_thumb.mrp", 320, "fdef71f46e297861746cb77f4a41a8ef1700740c834ba8fe761fdb7703dacb2a"],
+    ["arm-key", "../../tests/fixtures/mrp/asm.mrp", 320, "9e27da152e7048f46a0ea8fa2f89bb0917487ef3bad7e620a2ba24a0d7a821ab"],
+    ["thumb-touch", "../../tests/fixtures/mrp/asm_thumb.mrp", 320, "4cc5c663731e80ebe10f50d51e286e9af2c6903c934881c94f6245b145ede91a"],
+    ["mpc-console", "../../tests/fixtures/mrp/mpc.mrp", 295, "4eef29fb9c62d5997463126d04cdd6bd394637c2d3670cb72d6f19d71f71601b"],
+];
+const frame = document.querySelector("#runtime");
+const results = document.querySelector("#results");
+const report = [];
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitForReady() {
+    const deadline = performance.now() + 15000;
+    while (performance.now() < deadline) {
+        const doc = frame.contentDocument;
+        const log = doc?.querySelector("#consoleOutput")?.value ?? "";
+        if (/bridge_dsm_mr_start_dsm\('[^']+','start.mr',NULL\): 0x0/.test(log) &&
+            doc.querySelector("#key_ok")?.disabled === false) return;
+        if (/RuntimeError|Aborted|mem_invalid|Invalid Guest memory/.test(log)) {
+            throw new Error(log.slice(-2000));
+        }
+        await sleep(50);
+    }
+    throw new Error("Runtime startup exceeded 15 seconds");
+}
+async function pixelHash(height) {
+    const canvas = frame.contentDocument.querySelector("#canvas");
+    if (canvas.width !== 240 || canvas.height !== 320) {
+        throw new Error(`Unexpected canvas size: ${canvas.width}x${canvas.height}`);
+    }
+    const rgba = canvas.getContext("2d").getImageData(0, 0, 240, height).data;
+    const bgr = new Uint8Array(240 * height * 3);
+    for (let i = 0, j = 0; i < rgba.length; i += 4) {
+        bgr[j++] = rgba[i + 2];
+        bgr[j++] = rgba[i + 1];
+        bgr[j++] = rgba[i];
+    }
+    return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bgr))]
+        .map(value => value.toString(16).padStart(2, "0")).join("");
+}
+async function runCase([name, mrp, height, expected]) {
+    const url = new URL("../build/web/main.html", location.href);
+    if (mrp) {
+        url.searchParams.set("f", mrp);
+        url.searchParams.set("name", mrp.substring(mrp.lastIndexOf("/") + 1));
+    }
+    await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Page load exceeded 15 seconds")), 15000);
+        frame.onload = () => { clearTimeout(timeout); resolve(); };
+        frame.src = url.href;
+    });
+    await waitForReady();
+    await sleep(name.includes("-") ? 200 : 1200);
+    if (name === "arm-key") {
+        const module = frame.contentWindow.Module;
+        if (module._queuePhoneKey(1, 18) !== 0) throw new Error("Key press rejected");
+        await sleep(50);
+        if (module._queuePhoneKey(0, 18) !== 0) throw new Error("Key release rejected");
+        await sleep(1000);
+    } else if (name === "thumb-touch") {
+        const win = frame.contentWindow;
+        const canvas = frame.contentDocument.querySelector("#canvas");
+        const rect = canvas.getBoundingClientRect();
+        const options = {
+            bubbles: true, button: 0,
+            // Emscripten truncates both origin and event offsets; SDL then rescales to integer pixels.
+            clientX: Math.trunc(rect.left) + Math.ceil(230 * rect.width / canvas.width),
+            clientY: Math.trunc(rect.top) + Math.ceil(310 * rect.height / canvas.height),
+        };
+        canvas.dispatchEvent(new win.MouseEvent("mouseenter", options));
+        canvas.dispatchEvent(new win.MouseEvent("mousemove", options));
+        canvas.dispatchEvent(new win.MouseEvent("mousedown", {...options, buttons: 1}));
+        await sleep(50);
+        canvas.dispatchEvent(new win.MouseEvent("mouseup", {...options, buttons: 0}));
+        await sleep(1000);
+    }
+    const log = frame.contentDocument.querySelector("#consoleOutput").value;
+    if (/RuntimeError|Aborted|mem_invalid|Invalid Guest memory|\[stderr\]/.test(log)) {
+        throw new Error(log.slice(-2000));
+    }
+    const actual = await pixelHash(height);
+    if (actual !== expected) {
+        throw new Error(`Pixel mismatch: expected ${expected}, got ${actual}`);
+    }
+    if (name === "mpc-console") await verifyConsole();
+    return {name, passed: true, sha256: actual};
+}
+async function verifyConsole() {
+    const doc = frame.contentDocument;
+    const module = frame.contentWindow.Module;
+    const input = doc.querySelector("#consoleInput");
+    const waitForInput = async active => {
+        const deadline = performance.now() + 5000;
+        while (input.disabled === active && performance.now() < deadline) await sleep(50);
+        if (input.disabled === active) throw new Error("Console state transition timed out");
+    };
+    const openEditor = async () => {
+        if (module._queuePhoneKey(1, 5) !== 0) throw new Error("Editor key press rejected");
+        await sleep(50);
+        if (module._queuePhoneKey(0, 5) !== 0) throw new Error("Editor key release rejected");
+        await waitForInput(true);
+    };
+    const text = "mrpx \u4e2d\u6587\u8f93\u5165\u9a8c\u8bc1";
+    await openEditor();
+    input.value = text;
+    doc.querySelector("#consoleSubmit").click();
+    await waitForInput(false);
+    await openEditor();
+    if (input.value !== text) throw new Error("Guest did not retain submitted Chinese text");
+    input.value = "This change must be cancelled";
+    doc.querySelector("#consoleCancel").click();
+    await waitForInput(false);
+    await openEditor();
+    if (input.value !== text) throw new Error("Cancel changed Guest text");
+    doc.querySelector("#consoleCancel").click();
+    await waitForInput(false);
+}
+(async () => {
+    for (const item of cases) {
+        try {
+            report.push(await runCase(item));
+        } catch (error) {
+            report.push({name: item[0], passed: false, error: String(error)});
+        }
+        results.textContent = JSON.stringify(report, null, 2);
+    }
+    const passed = report.every(item => item.passed);
+    document.title = passed ? "PASS: mrpx WASM regression" : "FAIL: mrpx WASM regression";
+    document.body.dataset.result = passed ? "passed" : "failed";
+    if (passed) frame.src = "about:blank";
+})();
+</script>
+</html>

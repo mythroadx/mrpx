@@ -1,0 +1,36 @@
+{
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "make",
+            "command": "make",
+            "args": ["main"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "type": "shell",
+            "label": "make debug",
+            "command": "make",
+            "args": ["debug"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "type": "shell",
+            "label": "make de",
+            "command": "make",
+            "args": ["de"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "type": "shell",
+            "label": "make clean",
+            "command": "make",
+            "args": ["clean"],
+            "options": {"cwd": "${workspaceFolder}"}
+        }
+    ],
+    "version": "2.0.0"
+}
