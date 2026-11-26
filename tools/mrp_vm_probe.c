@@ -5,6 +5,7 @@
 
 #include "mr.h"
 #include "mem.h"
+#include "string.h"
 
 _Static_assert(sizeof(void *) == 4, "This probe requires a 32-bit target");
 _Static_assert(sizeof(int) == 4 && sizeof(mrp_Number) == 4, "Expected 32-bit integer VM");
@@ -115,6 +116,116 @@ static int check_results(mrp_State *state, const char *label) {
     return ok;
 }
 
+static int power_calls;
+static int power_args_ok;
+
+static int numeric_power(mrp_State *state) {
+    power_calls++;
+    power_args_ok = mrp_type(state, 1) == MRP_TNUMBER &&
+                    mrp_type(state, 2) == MRP_TNUMBER &&
+                    mrp_tonumber(state, 1) == 2 && mrp_tonumber(state, 2) == 3;
+    mrp_pushnumber(state, 203);
+    return 1;
+}
+
+static int left_power(mrp_State *state) {
+    power_calls++;
+    power_args_ok = mrp_type(state, 1) == MRP_TTABLE &&
+                    (mrp_type(state, 2) == MRP_TTABLE ||
+                     (mrp_type(state, 2) == MRP_TNUMBER && mrp_tonumber(state, 2) == 3));
+    mrp_pushnumber(state, 301);
+    return 1;
+}
+
+static int right_power(mrp_State *state) {
+    power_calls++;
+    power_args_ok = mrp_type(state, 1) == MRP_TNUMBER &&
+                    mrp_tonumber(state, 1) == 2 && mrp_type(state, 2) == MRP_TTABLE;
+    mrp_pushnumber(state, 302);
+    return 1;
+}
+
+static void power_table(mrp_State *state, const char *name, const char *field,
+                        mrp_CFunction callback) {
+    mrp_newtable(state);
+    mrp_newtable(state);
+    mrp_pushstring(state, field);
+    mrp_pushcfunction(state, callback);
+    mrp_settable(state, -3);
+    mrp_setmetatable(state, -2);
+    mrp_setglobal(state, name);
+}
+
+static int check_power_cases(void) {
+    enum { GLOBAL = 1, NONFUNCTION = 2, LEFT = 4, RIGHT = 8, WRONG_NAME = 16 };
+    static const struct {
+        const char *name, *source, *error;
+        int flags, expected, calls;
+    } cases[] = {
+        {"missing_global", "return 2 # 3", "err:1020", 0, 0, 0},
+        {"nonfunction_global", "return 2 # 3", "err:1020", NONFUNCTION, 0, 0},
+        {"numeric_global", "return 2 # 3", NULL, GLOBAL, 203, 1},
+        {"numeric_string", "return '2' # 3", NULL, GLOBAL, 203, 1},
+        {"left_metamethod", "return a # 3", NULL, GLOBAL | LEFT, 301, 1},
+        {"right_metamethod", "return 2 # b", NULL, GLOBAL | RIGHT, 302, 1},
+        {"both_metamethods", "return a # b", NULL, LEFT | RIGHT, 301, 1},
+        {"wrong_metamethod_name", "return a # 3", "expect num(arith)", WRONG_NAME, 0, 0}
+    };
+    size_t i;
+    int ok = 1;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mrp_State *state = mrp_open();
+        Reader reader = {cases[i].source, strlen2(cases[i].source)};
+        int status, passed;
+        const char *error;
+        if (!state) {
+            fprintf(stderr, "Cannot create power probe state\n");
+            return 0;
+        }
+        if (cases[i].flags & GLOBAL) mrp_register(state, "__op", numeric_power);
+        if (cases[i].flags & NONFUNCTION) {
+            mrp_pushnumber(state, 42);
+            mrp_setglobal(state, "__op");
+        }
+        if (cases[i].flags & LEFT) power_table(state, "a", "__op", left_power);
+        if (cases[i].flags & RIGHT) power_table(state, "b", "__op", right_power);
+        if (cases[i].flags & WRONG_NAME) power_table(state, "a", "__pow", left_power);
+        power_calls = 0;
+        power_args_ok = 0;
+        status = mrp_load(state, read_chunk, &reader, "@power-probe");
+        if (status) {
+            fprintf(stderr, "%s compile failed (%d): %s\n", cases[i].name,
+                    status, mrp_tostring(state, -1));
+            mrp_close(state);
+            return 0;
+        }
+        status = mrp_pcall(state, 0, 1, 0);
+        if (cases[i].error) {
+            error = mrp_tostring(state, -1);
+            passed = status == MRP_ERRRUN && error &&
+                     strstr2(error, cases[i].error);
+            printf("power %s: error %d: %s\n", cases[i].name, status,
+                   error ? error : "<non-string>");
+        } else {
+            passed = status == 0 && mrp_type(state, -1) == MRP_TNUMBER &&
+                     mrp_tonumber(state, -1) == cases[i].expected;
+            if (status == 0 && mrp_type(state, -1) == MRP_TNUMBER)
+                printf("power %s: %d\n", cases[i].name, (int)mrp_tonumber(state, -1));
+            else
+                printf("power %s: unexpected status %d\n", cases[i].name, status);
+        }
+        passed = passed && power_calls == cases[i].calls &&
+                 (!power_calls || power_args_ok);
+        if (!passed) {
+            fprintf(stderr, "Power case %s failed (calls=%d, args_ok=%d)\n",
+                    cases[i].name, power_calls, power_args_ok);
+            ok = 0;
+        }
+        mrp_close(state);
+    }
+    return ok;
+}
+
 int main(int argc, char **argv) {
     static const char source[] =
         "local x,y=6,3; return x & y, x | y, x ^ y, ~x, "
@@ -131,6 +242,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: mrp_vm_probe <new-bytecode-output>\n");
         return 1;
     }
+    mr_tm_init();
     state = mrp_open();
     if (!state) {
         fprintf(stderr, "Failed to create VM state\n");
@@ -206,5 +318,6 @@ int main(int argc, char **argv) {
     }
     status = check_results(state, "bytecode");
     mrp_close(state);
+    if (status) status = check_power_cases();
     return status ? 0 : 1;
 }
