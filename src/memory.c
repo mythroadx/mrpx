@@ -2,6 +2,8 @@
 #include "vmrp/memory.h"
 #include "vmrp/utils.h"
 
+#include <SDL2/SDL_log.h>
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -24,7 +26,7 @@ uint32 LG_mem_left;  // 剩余内存
 #define realLGmemSize(x) (((x) + 7) & (0xfffffff8))
 
 void initMemoryManager(uint32_t baseAddress, uint32_t len) {
-    printf("initMemoryManager: baseAddress:0x%X len: 0x%X\n", baseAddress, len);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "memory: initialize heap base=0x%X length=0x%X", baseAddress, len);
     Origin_LG_mem_base = getMrpMemRangePtr(baseAddress, len);
     if (Origin_LG_mem_base == NULL || len < sizeof(LG_mem_free_t)) {
         printf("Invalid Guest heap region.\n");

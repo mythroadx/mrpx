@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <SDL2/SDL_log.h>
+
 #include "vmrp/dsm.h"
 #include "vmrp/fileLib.h"
 #include "vmrp/memory.h"
@@ -23,11 +25,7 @@
 #undef LOG
 #endif
 
-#ifdef DEBUG
-#define LOG(format, ...) printf("   -> bridge: " format, ##__VA_ARGS__)
-#else
-#define LOG(format, ...)
-#endif
+#define LOG(format, ...) SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "bridge: " format, ##__VA_ARGS__)
 
 #define SET_RET_V(ret)                        \
     {                                         \
@@ -78,6 +76,73 @@ typedef struct {
 _Static_assert(sizeof(dsm_start_param_t) == 3 * sizeof(uint32_t), "DSM start parameters must use 32-bit guest addresses");
 static dsm_start_param_t *mr_start_dsm_param;
 static uint32_t mr_extHelper_addr;
+#ifndef __EMSCRIPTEN__
+static bool guestTerminalLogging = true;
+static bool guestStartupCapture;
+static bool guestStartupTruncated;
+static bool guestStartupExitHandler;
+static char guestStartupLog[65536];
+static size_t guestStartupLogLength;
+
+static void flushGuestStartupLog(void) {
+    if (!guestStartupCapture || guestStartupLogLength == 0) return;
+    fprintf(stderr, "ERROR: Guest startup log%s:\n", guestStartupTruncated ? " (earlier messages truncated)" : "");
+    fwrite(guestStartupLog, 1, guestStartupLogLength, stderr);
+    fflush(stderr);
+    guestStartupCapture = false;
+}
+
+static void captureGuestStartupLog(const char *text) {
+    if (!guestStartupCapture) return;
+    size_t length = strlen(text);
+    if (length >= sizeof(guestStartupLog)) {
+        text += length - (sizeof(guestStartupLog) - 1);
+        length = sizeof(guestStartupLog) - 1;
+        guestStartupTruncated = true;
+    }
+    if (length + 1 > sizeof(guestStartupLog) - guestStartupLogLength) {
+        guestStartupLogLength = 0;
+        guestStartupTruncated = true;
+    }
+    memcpy(guestStartupLog + guestStartupLogLength, text, length);
+    guestStartupLogLength += length;
+    guestStartupLog[guestStartupLogLength++] = '\n';
+}
+#endif
+
+void bridgeSetGuestTerminalLogging(bool enabled) {
+#ifndef __EMSCRIPTEN__
+    guestTerminalLogging = enabled;
+#else
+    (void)enabled;
+#endif
+}
+
+void bridgeBeginGuestStartup(void) {
+#ifndef __EMSCRIPTEN__
+    guestStartupLogLength = 0;
+    guestStartupTruncated = false;
+    guestStartupCapture = !guestTerminalLogging;
+    if (guestStartupCapture && !guestStartupExitHandler) {
+        if (atexit(flushGuestStartupLog) != 0) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Could not register Guest startup log handler; using terminal output.");
+            guestStartupCapture = false;
+            guestTerminalLogging = true;
+        } else {
+            guestStartupExitHandler = true;
+        }
+    }
+#endif
+}
+
+void bridgeEndGuestStartup(bool success) {
+#ifndef __EMSCRIPTEN__
+    if (!success) flushGuestStartupLog();
+    guestStartupCapture = false;
+#else
+    (void)success;
+#endif
+}
 
 static const char MUTEX_LOCK_FAIL[] = "mutex lock fail";
 static const char MUTEX_UNLOCK_FAIL[] = "mutex unlock fail";
@@ -92,8 +157,8 @@ static void br__mr_c_function_new(BridgeMap *o, uc_engine *uc) {
     uint32_t p_f, p_len;
     uc_reg_read(uc, UC_ARM_REG_R0, &p_f);
     uc_reg_read(uc, UC_ARM_REG_R1, &p_len);
-    printf("ext call %s(0x%X[%u], 0x%X[%u])\n", o->name, p_f, p_f, p_len, p_len);
-    dumpREG(uc);
+    LOG("ext call %s(0x%X[%u], 0x%X[%u])", o->name, p_f, p_f, p_len, p_len);
+    if (SDL_LogGetPriority(SDL_LOG_CATEGORY_APPLICATION) <= SDL_LOG_PRIORITY_DEBUG) dumpREG(uc);
 
     if (p_len < sizeof(*mr_c_function_P) ||
         getMrpMemRangePtr(p_f & ~1u, (p_f & 1u) ? 2 : 4) == NULL) {
@@ -375,7 +440,8 @@ static void br_log(BridgeMap *o, uc_engine *uc) {
     REQUIRE_GUEST(str, MR_FAILED);
     // LOG("ext call %s('%s')\n", o->name, str);
 #ifndef __EMSCRIPTEN__
-    puts(str);
+    if (guestTerminalLogging) printf("[guest] %s\n", str);
+    captureGuestStartupLog(str);
 #endif
     consoleGuestLog(str);
     // dumpREG(uc);
@@ -398,7 +464,7 @@ static void br_mem_get(BridgeMap *o, uc_engine *uc) {
     REQUIRE_GUEST(allocated, MR_FAILED);
     uint32_t buffer = toMrpMemAddr(allocated);
 
-    printf("br_mem_get base=0x%X len=%d(%d kb) =================\n", buffer, len, len / 1024);
+    LOG("guest heap base=0x%X length=%u", buffer, len);
 
     // *mem_base = buffer;
     memcpy(baseOut, &buffer, sizeof(buffer));
@@ -1375,7 +1441,7 @@ uc_err bridge_ext_init(uc_engine *uc) {
         printf("EXT did not initialize Guest state.\n");
         return UC_ERR_ARG;
     }
-    printf("-----> r9:0x%08" PRIX32 "\n", mr_c_function_P->start_of_ER_RW);
+    LOG("guest r9=0x%08" PRIX32, mr_c_function_P->start_of_ER_RW);
     return UC_ERR_OK;
 }
 

@@ -149,7 +149,7 @@ static void keyEvent(int16 type, SDL_Keycode code) {
             event(type, MR_KEY_POWER, 0);  // 挂机键
             break;
         default:
-            printf("key:%d\n", code);
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "input: key=%d", code);
             break;
     }
 }
@@ -373,7 +373,7 @@ static int showIdleScreen(void) {
     }
     SDL_SetWindowTitle(window, "mrpx - Open MRP (Ctrl+O)");
     consoleMessage("No MRP selected. Open an MRP from the mythroad folder (Ctrl+O), or drag it here.");
-    printf("No MRP selected; waiting for manual selection.\n");
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "No MRP selected; waiting for manual selection.");
     return MR_SUCCESS;
 }
 
@@ -448,7 +448,7 @@ static int openNativePackage(const char *path, const char *moduleName) {
 #endif
 
 static void printUsage(const char *program) {
-    printf("Usage: %s [--mrp package.mrp] [--module name.mr] [--screenshot image.bmp] [--capture-delay ms] [--right-softkey-after ms] [--click-right-after ms] [--sound-off-after ms]\n", program);
+    printf("Usage: %s [--verbose] [--mrp package.mrp] [--module name.mr] [--screenshot image.bmp] [--capture-delay ms] [--right-softkey-after ms] [--click-right-after ms] [--sound-off-after ms]\n", program);
 }
 
 int main(int argc, char *args[]) {
@@ -459,9 +459,12 @@ int main(int argc, char *args[]) {
     int32_t rightSoftkeyAfter = -1;
     int32_t clickRightAfter = -1;
     int32_t soundOffAfter = -1;
+    bool verbose = false;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(args[i], "--mrp") == 0 && i + 1 < argc) {
+        if (strcmp(args[i], "--verbose") == 0) {
+            verbose = true;
+        } else if (strcmp(args[i], "--mrp") == 0 && i + 1 < argc) {
             mrpPath = args[++i];
         } else if (strcmp(args[i], "--module") == 0 && i + 1 < argc) {
             moduleName = args[++i];
@@ -533,20 +536,15 @@ int main(int argc, char *args[]) {
         return EXIT_FAILURE;
     }
 
-#ifdef __x86_64__
-    printf("__x86_64__\n");
-#elif __i386__
-    printf("__i386__\n");
-#endif
-
-    printf("CODE_ADDRESS:0x%X, CODE_SIZE:0x%X\n", CODE_ADDRESS, CODE_SIZE);
-    printf("STACK_ADDRESS:0x%X, STACK_SIZE:0x%X\n", STACK_ADDRESS, STACK_SIZE);
-    printf("MEMORY_MANAGER_ADDRESS:0x%X, MEMORY_MANAGER_SIZE:0x%X\n", MEMORY_MANAGER_ADDRESS, MEMORY_MANAGER_SIZE);
-    printf("START_ADDRESS:0x%X, END_ADDRESS:0x%X\n", START_ADDRESS, END_ADDRESS);
-    printf("TOTAL_MEMORY:0x%X(%d)\n", TOTAL_MEMORY, TOTAL_MEMORY);
+    SDL_LogSetPriority(SDL_LOG_CATEGORY_APPLICATION, verbose ? SDL_LOG_PRIORITY_DEBUG : SDL_LOG_PRIORITY_INFO);
+    bridgeSetGuestTerminalLogging(verbose || screenshotPath != NULL);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION,
+                 "memory: code=0x%X+0x%X stack=0x%X+0x%X heap=0x%X+0x%X total=0x%X",
+                 CODE_ADDRESS, CODE_SIZE, STACK_ADDRESS, STACK_SIZE,
+                 MEMORY_MANAGER_ADDRESS, MEMORY_MANAGER_SIZE, TOTAL_MEMORY);
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) < 0) {
-        printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL could not initialize: %s", SDL_GetError());
         return -1;
     }
 
@@ -556,7 +554,7 @@ int main(int argc, char *args[]) {
 #endif
     window = SDL_CreateWindow("mrpx", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SCREEN_WIDTH, SCREEN_HEIGHT, windowFlags);
     if (window == NULL) {
-        printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Window could not be created: %s", SDL_GetError());
         SDL_Quit();
         return -1;
     }

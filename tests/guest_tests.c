@@ -3,6 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <io.h>
+#define test_dup _dup
+#define test_dup2 _dup2
+#define test_close _close
+#define test_fileno _fileno
+#else
+#include <unistd.h>
+#define test_dup dup
+#define test_dup2 dup2
+#define test_close close
+#define test_fileno fileno
+#endif
+
 #include "vmrp/bridge.h"
 #include "vmrp/memory.h"
 #include "vmrp/fileLib.h"
@@ -13,9 +27,11 @@
 
 static int drawCount;
 static int editCount;
+static int guestLogCount;
 
 void consoleGuestLog(const char *text) {
     assert(text != NULL);
+    guestLogCount++;
 }
 
 void guiDrawBitmap(uint16_t *bmp, int32_t x, int32_t y, int32_t w, int32_t h) {
@@ -77,6 +93,69 @@ static void testRanges(void) {
     tail[2] = 1;
     assert(getMrpWideStringPtr(END_ADDRESS - 4) == NULL);
     assert(getMrpWideStringPtr(END_ADDRESS - 1) == NULL);
+}
+
+static void testGuestLogRouting(uc_engine *engine) {
+    FILE *capture = tmpfile();
+    assert(capture != NULL);
+    assert(fflush(stdout) == 0);
+    int saved = test_dup(test_fileno(stdout));
+    assert(saved >= 0);
+    assert(test_dup2(test_fileno(capture), test_fileno(stdout)) >= 0);
+
+    char *message = getMrpMemPtr(CODE_ADDRESS);
+    strcpy(message, "guest-hidden-test");
+    bridgeSetGuestTerminalLogging(false);
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    strcpy(message, "guest-visible-test");
+    bridgeSetGuestTerminalLogging(true);
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    assert(guestLogCount == 2);
+
+    assert(fflush(stdout) == 0);
+    assert(test_dup2(saved, test_fileno(stdout)) >= 0);
+    assert(test_close(saved) == 0);
+    rewind(capture);
+    char output[256] = {0};
+    assert(fread(output, 1, sizeof(output) - 1, capture) > 0);
+    assert(strstr(output, "guest-hidden-test") == NULL);
+    assert(strstr(output, "[guest] guest-visible-test") != NULL);
+    assert(fclose(capture) == 0);
+
+    capture = tmpfile();
+    assert(capture != NULL);
+    assert(fflush(stderr) == 0);
+    saved = test_dup(test_fileno(stderr));
+    assert(saved >= 0);
+    assert(test_dup2(test_fileno(capture), test_fileno(stderr)) >= 0);
+    bridgeSetGuestTerminalLogging(false);
+    bridgeBeginGuestStartup();
+    strcpy(message, "startup-success-test");
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    bridgeEndGuestStartup(true);
+    bridgeBeginGuestStartup();
+    strcpy(message, "startup-failure-test");
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    bridgeEndGuestStartup(false);
+    bridgeBeginGuestStartup();
+    memset(message, 'x', 65536);
+    message[65536] = '\0';
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    strcpy(message, "startup-latest-test");
+    callBridge(engine, br_log, CODE_ADDRESS, 0, 0, 0);
+    bridgeEndGuestStartup(false);
+    assert(fflush(stderr) == 0);
+    assert(test_dup2(saved, test_fileno(stderr)) >= 0);
+    assert(test_close(saved) == 0);
+    rewind(capture);
+    memset(output, 0, sizeof(output));
+    assert(fread(output, 1, sizeof(output) - 1, capture) > 0);
+    assert(strstr(output, "startup-success-test") == NULL);
+    assert(strstr(output, "startup-failure-test") != NULL);
+    assert(strstr(output, "earlier messages truncated") != NULL);
+    assert(strstr(output, "startup-latest-test") != NULL);
+    assert(fclose(capture) == 0);
+    bridgeSetGuestTerminalLogging(true);
 }
 
 static void testBuffersAndFileIO(uc_engine *engine) {
@@ -308,6 +387,7 @@ int main(void) {
     uc_engine *engine = initVmrp();
     assert(engine != NULL);
     testRanges();
+    testGuestLogRouting(engine);
     testBuffersAndFileIO(engine);
     testExecutableCacheCoherency(engine);
     testStackAndUI(engine);

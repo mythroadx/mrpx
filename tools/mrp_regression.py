@@ -109,8 +109,7 @@ def validate_capture(case: Case, returncode: int, log: str, screenshot: Path) ->
     if returncode != 0:
         raise ValueError(f"Simulator exited with code {returncode}")
     markers = (
-        "bridge_dsm_init success",
-        f"bridge_dsm_mr_start_dsm('{case.package}','start.mr',NULL): 0x0",
+        f"VM started: package={case.package} module=start.mr",
         f"Saved screenshot: {screenshot}",
         case.action_marker,
     )

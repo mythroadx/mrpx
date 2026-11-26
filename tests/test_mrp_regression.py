@@ -18,8 +18,7 @@ class CaptureTests(unittest.TestCase):
         self.pixels = b"\x00\x00\xff" * 240 + b"\x00\x00\x00" * (240 * 319)
         self.case = regression.Case("test", "asm.mrp", hashlib.sha256(self.pixels).hexdigest())
         self.log = (
-            "bridge_dsm_init success\n"
-            "bridge_dsm_mr_start_dsm('asm.mrp','start.mr',NULL): 0x0\n"
+            "INFO: VM started: package=asm.mrp module=start.mr\n"
             f"Saved screenshot: {self.screenshot}\n"
         )
 

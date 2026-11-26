@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <SDL2/SDL_log.h>
+
 #include "vmrp/network.h"
 #include "vmrp/posix_sockets.h"
 #include "vmrp/dispatch.h"
@@ -181,13 +183,13 @@ static int32 my_connectSync(SOCKET_T s, int32 ip, uint16 port) {
     clientService.sin_port = htons(port);
     clientService.sin_addr.s_addr = htonl(ip);  //inet_addr("127.0.0.1");
 
-    printf("my_connect('%s', %d)\n", inet_ntoa(clientService.sin_addr), port);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: connect %s:%d", inet_ntoa(clientService.sin_addr), port);
 
     if (connect(s, (struct sockaddr*)&clientService, sizeof(clientService)) != 0) {
         printf("my_connect(0x%X) fail\n", ip);
         return MR_FAILED;
     }
-    printf("my_connect(0x%X) suc\n", ip);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: connected to 0x%X", ip);
     return MR_SUCCESS;
 }
 
@@ -227,7 +229,7 @@ int32 my_connect(int32 s, int32 ip, uint16 port, int32 type) {
         data->state = MR_SUCCESS;  // cmwap下设置一个伪状态
         return MR_SUCCESS;
     }
-    printf("my_connect() type: %s\n", type == MR_SOCKET_BLOCK ? "block" : "async");
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: connect mode=%s", type == MR_SOCKET_BLOCK ? "block" : "async");
     if (type == MR_SOCKET_NONBLOCK) {
         connectData_t* d = malloc(sizeof(connectData_t));
         if (d == NULL) {
@@ -287,7 +289,7 @@ int32 my_getSocketState(int32 s) {
     if (p == NULL) {
         return MR_FAILED;
     }
-    printf("my_getSocketState(%d): %d\n", s, p->state);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: socket=%d state=%d", s, p->state);
     return p->state;
 #else
     return MR_FAILED;
@@ -413,7 +415,7 @@ static int32 my_initNetworkSync() {
     do {
         emscripten_websocket_get_ready_state(bridgeSocket, &readyState);
         emscripten_thread_sleep(100);
-        printf("readyState:%d\n", readyState);
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: websocket state=%d", readyState);
     } while (readyState == 0);
 #endif
     return MR_SUCCESS;
@@ -446,7 +448,7 @@ static void* my_initNetworkAsync(void* arg) {
 int32 my_initNetwork(uc_engine* uc, uint32_t callbackAddr, const char* mode, uint32_t userDataAddr) {
     if (isNetworkDisabled()) return MR_FAILED;
 #ifdef NETWORK_SUPPORT
-    printf("my_initNetwork(0x%08X, '%s')\n", callbackAddr, mode);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: initialize callback=0x%08X mode=%s", callbackAddr, mode);
     if (strncasecmp("cmwap", mode, 5) == 0) {
         isCMWAP = TRUE;
     }
@@ -504,7 +506,7 @@ static int32 my_getHostByNameSync(const char* name) {
             struct in_addr* addr = &((struct sockaddr_in*)res->ai_addr)->sin_addr;
             // char addrstr[100];
             // printf("--- IPv4 address: %s\n", inet_ntop(res->ai_family, addr, addrstr, sizeof(addrstr)));
-            printf("--- IPv4 address: %s\n", inet_ntoa(*addr));
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: resolved IPv4=%s", inet_ntoa(*addr));
             ret = ntohl((*addr).s_addr);
             break;
         }
@@ -529,7 +531,7 @@ static int32 my_getHostByNameSync(const char* name) {
 static void* my_getHostByNameAsync(void* arg) {
     getHostByNameAsyncData_t* data = (getHostByNameAsyncData_t*)arg;
     int32 r = my_getHostByNameSync(data->name);
-    printf("my_getHostByNameAsync(): 0x%X\n", r);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: DNS result=0x%X", r);
     queueNetworkCallback(data->runtimeGeneration, data->networkGeneration,
                          data->callbackAddr, r, data->userDataAddr);
 #ifdef WIN_PLAT
@@ -551,7 +553,7 @@ static void* my_getHostByNameAsync(void* arg) {
 int32 my_getHostByName(uc_engine* uc, const char* name, uint32_t callbackAddr, uint32_t userDataAddr) {
     if (isNetworkDisabled()) return MR_FAILED;
 #ifdef NETWORK_SUPPORT
-    printf("my_getHostByName('%s', 0x%08X)\n", name, callbackAddr);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: resolve %s callback=0x%08X", name, callbackAddr);
     if (callbackAddr != 0) {
         uint64_t generation = getRuntimeGeneration();
         if (generation == 0) {
@@ -643,7 +645,7 @@ int32 my_sendto(int32 s, const char* buf, int len, int32 ip, uint16 port) {
     to.sin_port = htons(port);
     to.sin_addr.s_addr = htonl(ip);
 
-    printf("my_sendto(len:%d, '%s:%d')\n", len, inet_ntoa(to.sin_addr), port);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: send length=%d address=%s:%d", len, inet_ntoa(to.sin_addr), port);
 
     int ret = sendto(data->s, buf, len, SOCKET_SEND_FLAGS, (struct sockaddr*)&to, sizeof(to));
     if (ret == -1) {
@@ -761,7 +763,7 @@ int32 my_recvfrom(int32 s, char* buf, int len, int32* ip, uint16* port) {
     }
     *port = ntohs(from.sin_port);
     *ip = ntohl(from.sin_addr.s_addr);
-    printf("my_recvfrom(len:%d, '%s:%d')\n", len, inet_ntoa(from.sin_addr), *port);
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "network: receive length=%d address=%s:%d", len, inet_ntoa(from.sin_addr), *port);
 
     return ret;
 #else

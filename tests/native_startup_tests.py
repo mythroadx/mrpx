@@ -46,8 +46,9 @@ class NativeStartupTests(unittest.TestCase):
     def test_default_startup_opens_the_application_list(self) -> None:
         completed = self.run_program()
         self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertIn("bridge_dsm_init success", completed.stdout)
-        self.assertIn("bridge_dsm_mr_start_dsm('dsm_gm.mrp','start.mr',NULL): 0x0", completed.stdout)
+        self.assertIn("VM started: package=dsm_gm.mrp module=start.mr", completed.stdout)
+        self.assertNotIn("==========================REG", completed.stdout)
+        self.assertNotIn("memory: initialize heap", completed.stdout)
         pixels = read_pixels(self.screenshot)
         self.assertNotEqual(pixels, b"\0" * (240 * 320 * 3))
         explicit = self.run_program("--mrp", "mythroad/dsm_gm.mrp")
@@ -59,7 +60,19 @@ class NativeStartupTests(unittest.TestCase):
         completed = self.run_program()
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("Could not start application", completed.stdout)
-        self.assertNotIn("bridge_dsm_init success", completed.stdout)
+        self.assertNotIn("VM started:", completed.stdout)
+
+    def test_verbose_restores_diagnostics_and_preserves_guest_output(self) -> None:
+        normal = self.run_program("--mrp", "asm.mrp")
+        self.assertEqual(normal.returncode, 0, normal.stdout)
+        self.assertIn("[guest]", normal.stdout)
+        self.assertNotIn("memory: initialize heap", normal.stdout)
+        verbose = self.run_program("--verbose", "--mrp", "asm.mrp")
+        self.assertEqual(verbose.returncode, 0, verbose.stdout)
+        self.assertIn("memory: initialize heap", verbose.stdout)
+        self.assertIn("==========================REG", verbose.stdout)
+        self.assertIn("[guest]", verbose.stdout)
+        self.assertIn("VM started: package=asm.mrp module=start.mr", verbose.stdout)
 
     def test_mythroad_relative_and_absolute_paths_load_the_original_package(self) -> None:
         before = hashlib.sha256(self.fixture.read_bytes()).digest()
@@ -79,7 +92,7 @@ class NativeStartupTests(unittest.TestCase):
                 completed = self.run_program("--mrp", path)
                 self.assertNotEqual(completed.returncode, 0)
                 self.assertIn("Could not start application", completed.stdout)
-                self.assertNotIn("bridge_dsm_init success", completed.stdout)
+                self.assertNotIn("VM started:", completed.stdout)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

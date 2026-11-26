@@ -42,6 +42,9 @@ extern char *editGetText(int32 edit);
 
 uc_err bridge_init(uc_engine *uc);
 uc_err bridge_ext_init(uc_engine *uc);
+void bridgeSetGuestTerminalLogging(bool enabled);
+void bridgeBeginGuestStartup(void);
+void bridgeEndGuestStartup(bool success);
 
 int32_t bridge_dsm_init(uc_engine *uc);
 int32_t bridge_dsm_mr_start_dsm(uc_engine *uc, char *filename, char *ext, char *entry);

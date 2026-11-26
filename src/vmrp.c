@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <SDL2/SDL_log.h>
+
 #include "vmrp/bridge.h"
 #include "vmrp/fileLib.h"
 #include "vmrp/memory.h"
@@ -224,9 +226,11 @@ int32_t loadCode() {
 }
 
 int startVmrp(const char *mrpFilename, const char *moduleName) {
+    bridgeBeginGuestStartup();
     uc = initVmrp();
     if (uc == NULL) {
         printf("initVmrp() fail.\n");
+        bridgeEndGuestStartup(false);
         return MR_FAILED;
     }
 
@@ -234,34 +238,41 @@ int startVmrp(const char *mrpFilename, const char *moduleName) {
         printf("loadCode failed: cfunction.ext was not found or could not be loaded.\n");
         freeVmrp(uc);
         uc = NULL;
+        bridgeEndGuestStartup(false);
         return MR_FAILED;
     }
     if (bridge_ext_init(uc) != UC_ERR_OK) {
         freeVmrp(uc);
         uc = NULL;
+        bridgeEndGuestStartup(false);
         return MR_FAILED;
     }
 
     if (bridge_dsm_init(uc) == MR_SUCCESS) {
-        printf("bridge_dsm_init success\n");
-        dumpREG(uc);
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "VM: DSM initialized");
+        if (SDL_LogGetPriority(SDL_LOG_CATEGORY_APPLICATION) <= SDL_LOG_PRIORITY_DEBUG) dumpREG(uc);
 
         const char *filename = mrpFilename ? mrpFilename : "dsm_gm.mrp";
         const char *extName = moduleName ? moduleName : "start.mr";
         // char *extName = "cfunction.ext";
 
         uint32_t ret = bridge_dsm_mr_start_dsm(uc, (char *)filename, (char *)extName, NULL);
-        printf("bridge_dsm_mr_start_dsm('%s','%s',NULL): 0x%X\n", filename, extName, ret);
         if (ret != MR_SUCCESS) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "VM: failed to start package=%s module=%s result=0x%X",
+                         filename, extName, ret);
             freeVmrp(uc);
             uc = NULL;
+            bridgeEndGuestStartup(false);
             return MR_FAILED;
         }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "VM started: package=%s module=%s", filename, extName);
     } else {
         printf("bridge_dsm_init failed.\n");
         freeVmrp(uc);
         uc = NULL;
+        bridgeEndGuestStartup(false);
         return MR_FAILED;
     }
+    bridgeEndGuestStartup(true);
     return MR_SUCCESS;
 }

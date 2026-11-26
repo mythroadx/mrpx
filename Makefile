@@ -206,7 +206,7 @@ test-startup: $(TARGET)
 	$(PYTHON) tests/native_startup_tests.py --simulator "$(TARGET)"
 
 $(TEST_DIR)/memory-tests$(EXE_SUFFIX): tests/memory_tests.c $(SRC_DIR)/memory.c $(TEST_HEADERS) | $(TEST_DIR)
-	$(CC) $(TEST_CFLAGS) -o "$@" tests/memory_tests.c
+	$(CC) $(TEST_CFLAGS) -o "$@" tests/memory_tests.c $(SDL_LIBS)
 
 $(TEST_DIR)/network-tests$(EXE_SUFFIX): tests/network_tests.c $(SRC_DIR)/network.c $(SRC_DIR)/dispatch.c $(SRC_DIR)/utils.c $(SRC_DIR)/rbtree.c $(TEST_HEADERS) | $(TEST_DIR)
 	# PE unwind tables otherwise retain unrelated utility functions during section GC.
