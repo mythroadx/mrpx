@@ -34,6 +34,7 @@
 - 使用 [mrp_bytecode.py](../../tools/mrp_bytecode.py)提取脚本并逐字节解释前 64 字节；实际扫雷样本的格式与原生扩展依赖见 [ESP32 阶段 0 报告](ESP32_PHASE0.md)。
 - ESP32-S3 原生移植的架构、内存、DSM API、EXT 裁剪、字节码、启动流程及验证清单见 [完整可行性研究报告](ESP32_FEASIBILITY.md)；其中明确区分源码事实、设计估算与尚未完成的硬件验证。
 - MRP 全量离线扫描、样本、插件和复现命令见 [MRP 研究报告](MRP_RESEARCH_REPORT.md)；分别参照 [格式规范](MRP_FORMAT_SPEC.md)、[运行时规范](RUNTIME_SPEC.md)、[Lua 5.0 差异](LUA5_DIFFS.md)和[历史文档对照](OFFICIAL_DOCS_NOTES.md)。扫描分类和机械提取的 API 索引均是静态线索，不保证运行兼容或 ABI 一致。
+- 学习 Mythroad 与 Lua 5.0 的关系、方言、入口格式、事件及可运行示例，先看 [Mythroad Lua 开发指南](MYTHROAD_LUA5_DEVELOPMENT_GUIDE.md)。
 - 使用 [mrp_tool.py](../../tools/mrp_tool.py) 的 `scan`、`unpack`、`pack`、`const`、`bmp` 子命令研究索引型包；已识别的包头 CRC 可在修改后重算，未知值保留并警告；旧式 gzip/ZIP 等未支持格式会明确报错，输出不会覆盖现有文件。用 [mrp_doc_index.py](../../tools/mrp_doc_index.py) 索引已解包的 API CHM；完整命令和限制见研究报告。
 - [源码方言探针](../../tools/mrp_dialect_probe.mr)可在当前 WASM 中逐项执行；用 [结果转换器](../../tools/mrp_dialect_results.py)将浏览器日志转换为 JSON/CSV。31 项结果、按键事件、环境和复现命令见 [Lua 差异](LUA5_DIFFS.md#73-wasm-源码方言与事件探针)。现有 `scan` 不解析源码入口，分类 C 不等于运行失败。
 - [VM 探针](../../tools/mrp_vm_probe.c)及 [构建脚本](../../tools/build_mrp_vm_probe.ps1)可在 MSVC x86 `/Od` 下执行自写位运算样本；`/O2` 的编译器异常、[独立缩减测试](../../tools/mrp_compiler_shift_probe.c)和证据见 [Lua 差异](LUA5_DIFFS.md)第 7 节，不能将探针结果当作游戏或官方工具验收。
