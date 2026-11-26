@@ -180,3 +180,53 @@ GUIDE|press|1|2
 5. **交叉验证**：在可控环境测试官方编译器、历史模拟器及目标设备，分别确认源码/字节码、压缩、入口和回调差异；不得以当前 WASM 的成功替代这些验证。
 
 深入材料：[格式规范](MRP_FORMAT_SPEC.md)、[运行时规范](RUNTIME_SPEC.md)、[Lua 5.0 逐项差异](LUA5_DIFFS.md)、[研究报告](MRP_RESEARCH_REPORT.md)。
+
+## 9. Windows 原生开发原型
+
+此原型直接编译归档 VM 和源码解析器，在 Windows x86 进程中运行**新应用源码**，不使用 Unicorn，也不加载平台或应用内 ARM EXT。它是第一阶段的最小开发闭环，不是完整 Mythroad 平台，也不保证与第 6 节的 WASM Guest 像素或行为一致。
+
+需要 Visual Studio 的 x86 C 编译工具和 Windows SDK。工作区根目录运行：
+
+```powershell
+.\tools\build_mythroad_native.ps1 -OutputDirectory build\mythroad-native-draw
+.\build\mythroad-native-draw\mythroad-native.exe tools\mrp_lua_guide_example.mr
+```
+
+构建使用 x86、`/Od`；目标目录必须不存在，避免覆盖现有文件。找不到 Visual Studio 时可以显式传 `-VcVarsAll`。当前 VM 依赖 32 位指针和整数布局，不能将此构建直接改成 x64；归档源码的优化级别边界见 [MSVC 优化实验](LUA5_DIFFS.md#72-msvc-优化构建异常)。关闭窗口退出，控制台显示 `print` 输出和错误。
+
+较完整的贪吃蛇示例：
+
+```powershell
+.\build\mythroad-native-draw\mythroad-native.exe examples\mythroad-native\snake.mr
+```
+
+进入后按 Enter 或 F1 开始/暂停，方向键控制移动，F2 重新开始（重新开始后仍需按 Enter 或 F1）。游戏包含计分、进程内最高分、吃食物增长、逐级加速、碰撞和满格胜利。食物按移动步数确定位置，并跳过被蛇占用的格子；这不是随机数。画面使用矩形、线和点绘制，文字字体效果取决于系统；LSK 和 RSK 分别表示左、右软键。
+
+将示例作为 `start.mr` 打包后，也可由本仓库 Windows Unicorn 模拟器加载。实际验证中，源码包成功启动并显示棋盘；测试专用包装器通过模拟右软键启动游戏并记录定时器移动、吃食物、转向、暂停/恢复和撞墙。不等于对其他 Guest 或设备的兼容保证。模拟器的实际键盘映射与原生原型不同：Enter 为确认键，方向键或 WASD 移动，Q（或左方括号）是左软键，E（或右方括号）是右软键；F1 控制模拟器面板，不是游戏左软键。
+
+原型接受单个不超过 1 MiB 的源码文件，不读取 MRP 包、字节码或 EXT，也不提供应用资源和存档。它没有注册完整基础库、`table`/`string` 库、图片、音频、网络、短信或支付 API；不要把缺失接口当作成功。源码应为 UTF-8 无 BOM，应用应只调用下列已实现接口：
+
+| 接口 | 原型行为 |
+|---|---|
+| `print(...)` | 输出字符串和整数；其他类型输出类型名 |
+| `_str(value)` | 将整数或字符串转为字符串 |
+| `_clearScr(r,g,b)` | 清屏，颜色分量为 0–255 |
+| `_drawRect(x,y,w,h,r,g,b)` | 绘制填充矩形，裁剪到画布；宽或高不为正时不绘制 |
+| `_drawLine(x1,y1,x2,y2,r,g,b)` | 绘制包含两个端点的直线，屏幕外像素被裁剪 |
+| `_drawPoint(x,y,r,g,b)` | 绘制一个点，屏幕外的点不绘制 |
+| `_drawText(text,x,y,r,g,b)` | 用 Windows GDI 绘制 UTF-8 文字；不支持额外的历史字体/编码参数 |
+| `_dispUp(x,y,w,h)` | 请求重绘整个窗口；暂不使用矩形优化 |
+| `_timerStart(0,ms,"callback")` | 启动一个一次性定时器（1–65535 ms）；到期调用同名全局函数，重新启动会替换上一个 |
+| `_exit()` | 结束运行 |
+| `dealevent(code,p0,p1)` | 可选的全局事件函数；接收按键和鼠标按下/释放 |
+
+绘图坐标和尺寸须在有符号 16 位范围内，颜色分量须在 0–255 范围内；原型对无效参数报错，而不模仿历史实现的截断。窗口客户区固定为 240×320，使用 Windows 字体和 32 位画布，不模拟原来的 RGB565 颜色或字体栅格。数字键、方向键、Enter、F1/F2、A/B 分别映射到对应 Mythroad 键；鼠标左键传递坐标。GDI 字体取决于系统，中文接受 UTF-8 但不能保证所有字形或历史字体效果。`--check` 运行入口后退出，`--check --event 0 18 0` 可额外注入一次右软键按下事件：
+
+```powershell
+.\build\mythroad-native-draw\mythroad-native.exe --check --event 0 18 0 tools\mrp_lua_guide_example.mr
+.\tests\mythroad_native_tests.ps1 -Executable build\mythroad-native-draw\mythroad-native.exe
+.\tools\build_mythroad_native.ps1 -OutputDirectory build\mythroad-native-graphics-check -GraphicsTests
+.\build\mythroad-native-graphics-check\mythroad-native-graphics-tests.exe examples\mythroad-native\snake.mr
+```
+
+测试覆盖示例启动及注入事件、贪吃蛇逻辑和定时器、绘图接口与游戏画布的部分像素、UTF-8 检查，以及源码、接口、事件和 EXT 错误；它不是完整兼容或全画面像素测试。源码以本机进程权限执行，VM 没有安全沙箱，不应运行不可信代码。原生重建和后续分发仍需核查归档各部分的来源和授权。

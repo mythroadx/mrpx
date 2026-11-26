@@ -91,6 +91,8 @@ python tools\mrp_doc_index.py 'C:\path\skyengine' 'C:\path\mythroad-api' `
 
 `[归档文献]` `MRP插件浅析.rar` 包含 PowerPoint。只离线解析其可辨识文本记录；它将内置/外置插件、主模块、插件标识和事件转发作为主题，文本流并非完全解析。`整理的ext重要函数.c` 是社区分析稿，其中的函数表和结构体需按具体 SDK 与编译宏核验，不能当作所有设备的 ABI 规范。本研究没有加载或执行其中的 ARM 代码。
 
+SDK 的 `mr_helper.lib` 与字体静态库保留 ARM ELF 符号；其中部分代码片段已与 SDK 样本及用户语料作有范围限制的字节对照。`Small_Font.rar` 中还找到与用户语料完整哈希相同的 `skyfont.ext` 和 `verdload.ext`；结果与未验证边界见 [EXT 研究报告](EXT_ANALYSIS.md#7-历史-sdk-中的符号化目标文件及语料对照)。
+
 三个插件包的实际资源、ASCII 标识扫描及局限见 [研究报告](MRP_RESEARCH_REPORT.md)。663 个解析成功的入口没有命中所选插件名，但未覆盖动态字符串、其他脚本及外部文件；普通游戏的真实依赖比例仍未知。
 
 ## 6. 后续验证

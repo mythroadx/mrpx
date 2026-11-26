@@ -1,0 +1,222 @@
+cols = 10
+rows = 12
+best = 0
+
+def redraw()
+  _clearScr(10, 17, 28)
+  _drawRect(0, 0, 240, 45, 20, 36, 53)
+  _drawText("SNAKE", 10, 4, 115, 235, 190)
+  _drawText("SCORE " .. _str(score), 78, 4, 255, 255, 255)
+  _drawText("BEST " .. _str(best), 165, 4, 240, 202, 105)
+  _drawText("LEVEL " .. _str(level), 10, 24, 145, 190, 210)
+
+  if state == 1 then
+    _drawText("PAUSED - OK/LSK", 78, 24, 255, 220, 100)
+  elif state == 2 then
+    _drawText("GAME OVER", 78, 24, 255, 100, 100)
+  elif state == 3 then
+    _drawText("YOU WIN!", 78, 24, 120, 255, 140)
+  else
+    _drawText("ARROWS TO MOVE", 78, 24, 180, 205, 215)
+  end
+
+  _drawRect(24, 52, 192, 228, 38, 65, 75)
+  _drawLine(24, 52, 215, 52, 100, 170, 170)
+  _drawLine(24, 52, 24, 279, 100, 170, 170)
+  _drawLine(24, 279, 215, 279, 17, 38, 48)
+  _drawLine(215, 52, 215, 279, 17, 38, 48)
+  local row = 1
+  while row <= rows do
+    local col = 1
+    while col <= cols do
+      _drawRect(30 + (col - 1) * 18, 58 + (row - 1) * 18, 17, 17, 18, 31, 39)
+      col = col + 1
+    end
+    row = row + 1
+  end
+
+  if food_x != 0 then
+    local x = 30 + (food_x - 1) * 18
+    local y = 58 + (food_y - 1) * 18
+    _drawRect(x + 3, y + 5, 11, 10, 238, 82, 72)
+    _drawRect(x + 5, y + 3, 7, 2, 255, 122, 85)
+    _drawRect(x + 8, y + 1, 2, 3, 120, 220, 95)
+    _drawPoint(x + 5, y + 7, 255, 220, 160)
+  end
+  local i = count
+  while i >= 1 do
+    local x = 30 + (snake_x[i] - 1) * 18
+    local y = 58 + (snake_y[i] - 1) * 18
+    if i == 1 then
+      _drawRect(x + 1, y + 1, 15, 15, 87, 220, 142)
+      _drawRect(x + 2, y + 2, 13, 2, 165, 255, 186)
+      if dx == 1 then
+        _drawRect(x + 11, y + 4, 2, 2, 12, 47, 42)
+        _drawRect(x + 11, y + 11, 2, 2, 12, 47, 42)
+      elif dx == -1 then
+        _drawRect(x + 4, y + 4, 2, 2, 12, 47, 42)
+        _drawRect(x + 4, y + 11, 2, 2, 12, 47, 42)
+      elif dy == -1 then
+        _drawRect(x + 4, y + 4, 2, 2, 12, 47, 42)
+        _drawRect(x + 11, y + 4, 2, 2, 12, 47, 42)
+      else
+        _drawRect(x + 4, y + 11, 2, 2, 12, 47, 42)
+        _drawRect(x + 11, y + 11, 2, 2, 12, 47, 42)
+      end
+    else
+      _drawRect(x + 2, y + 2, 13, 13, 49, 160, 108)
+      _drawRect(x + 3, y + 3, 11, 2, 105, 212, 145)
+    end
+    i = i - 1
+  end
+  _drawText("LSK: PAUSE  RSK: RESTART", 20, 293, 180, 200, 210)
+  _dispUp(0, 0, 240, 320)
+end
+
+def place_food()
+  food_x = 0
+  food_y = 0
+  local cell = food_cursor
+  local checked = 0
+  while checked < cols * rows do
+    local x = cell
+    local y = 1
+    while x > cols do
+      x = x - cols
+      y = y + 1
+    end
+    local occupied = false
+    local i = 1
+    while i <= count do
+      if snake_x[i] == x && snake_y[i] == y then
+        occupied = true
+      end
+      i = i + 1
+    end
+    if !occupied then
+      food_x = x
+      food_y = y
+      food_cursor = cell
+      return
+    end
+    cell = cell + 1
+    if cell > cols * rows then cell = 1 end
+    checked = checked + 1
+  end
+  state = 3
+end
+
+def restart()
+  snake_x = {3, 2, 1}
+  snake_y = {3, 3, 3}
+  count = 3
+  score = 0
+  level = 1
+  delay = 250
+  next_level_score = 4
+  food_cursor = 1
+  dx = 1
+  dy = 0
+  next_dx = 1
+  next_dy = 0
+  food_x = 5
+  food_y = 3
+  state = 1
+  redraw()
+end
+
+def tick()
+  if state != 0 then
+    return
+  end
+  dx = next_dx
+  dy = next_dy
+  local x = snake_x[1] + dx
+  local y = snake_y[1] + dy
+  if x < 1 || x > cols || y < 1 || y > rows then
+    state = 2
+    redraw()
+    return
+  end
+
+  local grows = x == food_x && y == food_y
+  local limit = count
+  if !grows then
+    limit = count - 1
+  end
+  local i = 1
+  while i <= limit do
+    if snake_x[i] == x && snake_y[i] == y then
+      state = 2
+      redraw()
+      return
+    end
+    i = i + 1
+  end
+
+  if grows then
+    count = count + 1
+    score = score + 1
+    if score > best then best = score end
+    if score >= next_level_score && delay > 100 then
+      level = level + 1
+      delay = delay - 25
+      next_level_score = next_level_score + 4
+    end
+  end
+  i = count
+  while i > 1 do
+    snake_x[i] = snake_x[i - 1]
+    snake_y[i] = snake_y[i - 1]
+    i = i - 1
+  end
+  snake_x[1] = x
+  snake_y[1] = y
+  food_cursor = food_cursor + 37
+  if food_cursor > cols * rows then food_cursor = food_cursor - cols * rows end
+  if grows then
+    place_food()
+  end
+  redraw()
+  if state == 0 then
+    _timerStart(0, delay, "tick")
+  end
+end
+
+def dealevent(code, key, extra)
+  if code != 0 then
+    return
+  end
+  if key == 18 then
+    restart()
+    return
+  end
+  if key == 17 || key == 20 then
+    if state == 1 then
+      state = 0
+      _timerStart(0, delay, "tick")
+    elif state == 0 then
+      state = 1
+    end
+    redraw()
+    return
+  end
+  if state != 0 then
+    return
+  end
+  if key == 12 && dy != 1 then
+    next_dx = 0
+    next_dy = -1
+  elif key == 13 && dy != -1 then
+    next_dx = 0
+    next_dy = 1
+  elif key == 14 && dx != 1 then
+    next_dx = -1
+    next_dy = 0
+  elif key == 15 && dx != -1 then
+    next_dx = 1
+    next_dy = 0
+  end
+end
+
+restart()
