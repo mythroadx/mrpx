@@ -8,7 +8,7 @@
 | --- | --- |
 | [mythroad.c](mythroad.c)、[mythroad_mini.c](mythroad_mini.c) | 完整版与精简版运行时、事件和资源管理 |
 | [dsm.c](dsm.c) | Guest 平台适配及宿主函数表调用 |
-| [src/](src/) | Lua 风格的脚本虚拟机、字节码、GC、解析器及标准库 |
+| [src/](src/) | Lua 5.0 派生的脚本虚拟机、MRP 字节码及附加位运算指令、GC、解析器及标准库 |
 | [include/](include/) | 历史 SDK 类型、接口与编码表 |
 | [asm/](asm/) 与 [fixR9.c](fixR9.c) | ARM 寄存器上下文、R9/R10 切换及生成脚本 |
 | [luadec/](luadec/) | 脚本反编译实现 |

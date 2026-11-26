@@ -502,13 +502,14 @@ def capture_after_sound_prompt(
     return key_completed, key_score, True
 
 
-def parse_package(path: Path) -> PackageReport:
+def parse_package(path: Path, data: bytes | None = None) -> PackageReport:
     report = PackageReport(path=path)
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        report.errors.append(f"Could not read package: {exc}")
-        return report
+    if data is None:
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            report.errors.append(f"Could not read package: {exc}")
+            return report
 
     report.file_size = len(data)
     if len(data) < HEADER_SIZE:

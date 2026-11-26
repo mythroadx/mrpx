@@ -1,0 +1,210 @@
+/* Standalone research probe: archived VM/parser plus local host stubs, not DSM. */
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "mr.h"
+#include "mem.h"
+
+_Static_assert(sizeof(void *) == 4, "This probe requires a 32-bit target");
+_Static_assert(sizeof(int) == 4 && sizeof(mrp_Number) == 4, "Expected 32-bit integer VM");
+
+void *mr_malloc(uint32 size) { return malloc(size); }
+void mr_free(void *ptr, uint32 size) { (void)size; free(ptr); }
+void *mr_realloc(void *ptr, uint32 oldsize, uint32 size) {
+    (void)oldsize;
+    return realloc(ptr, size);
+}
+void *mr_mallocExt(uint32 size) { return malloc(size); }
+void *mr_mallocExt0(uint32 size) { return calloc(1, size); }
+void mr_freeExt(void *ptr) { free(ptr); }
+void *mr_reallocExt(void *ptr, uint32 size) { return realloc(ptr, size); }
+
+void mr_printf(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+}
+
+int mr_isdigit(int ch) { return ch >= '0' && ch <= '9'; }
+int mr_isxdigit(int ch) {
+    return mr_isdigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+}
+int mr_isalpha(int ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+int mr_isalnum(int ch) { return mr_isalpha(ch) || mr_isdigit(ch); }
+int mr_iscntrl(int ch) { return (unsigned int)ch < 32u || ch == 127; }
+int mr_isspace(int ch) {
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f' || ch == '\v';
+}
+
+static int c_and(mrp_State *state) {
+    int a = (int)mrp_tonumber(state, 1), b = (int)mrp_tonumber(state, 2);
+    mrp_pushnumber(state, a & b);
+    return 1;
+}
+static int c_or(mrp_State *state) {
+    int a = (int)mrp_tonumber(state, 1), b = (int)mrp_tonumber(state, 2);
+    mrp_pushnumber(state, a | b);
+    return 1;
+}
+static int c_xor(mrp_State *state) {
+    int a = (int)mrp_tonumber(state, 1), b = (int)mrp_tonumber(state, 2);
+    mrp_pushnumber(state, a ^ b);
+    return 1;
+}
+static int c_not(mrp_State *state) {
+    mrp_pushnumber(state, !(int)mrp_tonumber(state, 1));
+    return 1;
+}
+static int c_mod(mrp_State *state) {
+    int a = (int)mrp_tonumber(state, 1), b = (int)mrp_tonumber(state, 2);
+    mrp_pushnumber(state, a % b);
+    return 1;
+}
+
+typedef struct {
+    const char *data;
+    size_t length;
+} Reader;
+
+typedef struct {
+    FILE *file;
+    int failed;
+} Writer;
+
+static const char *read_chunk(mrp_State *state, void *data, size_t *size) {
+    Reader *reader = (Reader *)data;
+    (void)state;
+    *size = reader->length;
+    reader->length = 0;
+    return reader->data;
+}
+
+static int write_chunk(mrp_State *state, const void *data, size_t size, void *output) {
+    Writer *writer = (Writer *)output;
+    (void)state;
+    if (fwrite(data, 1, size, writer->file) != size) writer->failed = 1;
+    return writer->failed;
+}
+
+static int check_results(mrp_State *state, const char *label) {
+    static const int expected[] = {2, 7, 5, -7, 2, 7, 5, 0, 2};
+    int status = mrp_pcall(state, 0, 9, 0);
+    int i, ok = 1;
+    if (status) {
+        fprintf(stderr, "%s execution failed (%d): %s\n", label, status, mrp_tostring(state, -1));
+        return 0;
+    }
+    printf("%s:", label);
+    for (i = 0; i < 9; i++) {
+        if (mrp_type(state, i + 1) != MRP_TNUMBER) {
+            printf(" <non-number>");
+            ok = 0;
+            continue;
+        }
+        int actual = (int)mrp_tonumber(state, i + 1);
+        printf(" %d", actual);
+        if (actual != expected[i]) ok = 0;
+    }
+    printf("\n");
+    if (!ok) fprintf(stderr, "%s results did not match the expected values\n", label);
+    mrp_settop(state, 0);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    static const char source[] =
+        "local x,y=6,3; return x & y, x | y, x ^ y, ~x, "
+        "_and(x,y), _or(x,y), _xor(x,y), _not(x), _mod(x,4)";
+    Reader reader = {source, sizeof(source) - 1};
+    mrp_State *state;
+    Writer writer;
+    FILE *input;
+    char *bytes;
+    long length;
+    int status, close_status;
+
+    if (argc != 2) {
+        fprintf(stderr, "Usage: mrp_vm_probe <new-bytecode-output>\n");
+        return 1;
+    }
+    state = mrp_open();
+    if (!state) {
+        fprintf(stderr, "Failed to create VM state\n");
+        return 1;
+    }
+    mrp_register(state, "_and", c_and);
+    mrp_register(state, "_or", c_or);
+    mrp_register(state, "_xor", c_xor);
+    mrp_register(state, "_not", c_not);
+    mrp_register(state, "_mod", c_mod);
+
+    status = mrp_load(state, read_chunk, &reader, "@probe.mr");
+    if (status) {
+        fprintf(stderr, "Source parse failed (%d): %s\n", status, mrp_tostring(state, -1));
+        mrp_close(state);
+        return 1;
+    }
+    writer.file = fopen(argv[1], "wbx");
+    writer.failed = 0;
+    if (!writer.file) {
+        perror("Cannot create new bytecode output");
+        mrp_close(state);
+        return 1;
+    }
+    status = mrp_dump(state, write_chunk, &writer);
+    close_status = fclose(writer.file);
+    if (status != 1 || writer.failed || close_status) {
+        fprintf(stderr, "Bytecode dump failed; output may be incomplete\n");
+        mrp_close(state);
+        return 1;
+    }
+    if (!check_results(state, "source")) {
+        mrp_close(state);
+        return 1;
+    }
+
+    input = fopen(argv[1], "rb");
+    if (!input) {
+        perror("Cannot reopen bytecode");
+        mrp_close(state);
+        return 1;
+    }
+    if (fseek(input, 0, SEEK_END) || (length = ftell(input)) <= 0 ||
+        length > 65536 || fseek(input, 0, SEEK_SET)) {
+        fprintf(stderr, "Invalid generated bytecode size\n");
+        fclose(input);
+        mrp_close(state);
+        return 1;
+    }
+    bytes = (char *)malloc((size_t)length);
+    if (!bytes) {
+        fprintf(stderr, "Cannot allocate bytecode buffer\n");
+        fclose(input);
+        mrp_close(state);
+        return 1;
+    }
+    status = fread(bytes, 1, (size_t)length, input) == (size_t)length;
+    close_status = fclose(input);
+    if (!status || close_status) {
+        fprintf(stderr, "Cannot read generated bytecode\n");
+        free(bytes);
+        mrp_close(state);
+        return 1;
+    }
+    reader.data = bytes;
+    reader.length = (size_t)length;
+    status = mrp_load(state, read_chunk, &reader, "@probe.mr");
+    free(bytes);
+    if (status) {
+        fprintf(stderr, "Bytecode load failed (%d): %s\n", status, mrp_tostring(state, -1));
+        mrp_close(state);
+        return 1;
+    }
+    status = check_results(state, "bytecode");
+    mrp_close(state);
+    return status ? 0 : 1;
+}

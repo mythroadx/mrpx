@@ -1,0 +1,61 @@
+local cases = {
+  {"c_line_comment", "// comment\nreturn 11"},
+  {"c_block_comment", "/* comment */ return 12"},
+  {"lua_line_comment", "-- comment\nreturn 13"},
+  {"lua_block_comment", "--[[comment]]\nreturn 14"},
+  {"local_arithmetic", "local x=3; return x+4"},
+  {"def_function", "def f(x) return x*2 end; return f(4)"},
+  {"lua_function", "function f(x) return x end; return f(1)"},
+  {"table_index", "local t={3,4}; return t[1]+t[2]"},
+  {"numeric_for", "local s=0; for i=1,3 do s=s+i end; return s"},
+  {"while_loop", "local x=0; while x<3 do x=x+1 end; return x"},
+  {"repeat_loop", "local x=0; repeat x=x+1 until x==3; return x"},
+  {"string_concat", "return \"ab\"..\"cd\""},
+  {"long_string", "return [[hello]]"},
+  {"escaped_string", "return \"a\\tb\" == \"a\\tb\""},
+  {"logical_symbols", "return (true && true) || false"},
+  {"logical_words", "return true and false"},
+  {"symbol_not", "return !false"},
+  {"word_not", "return not false"},
+  {"symbol_ne", "return 1 != 2"},
+  {"lua_ne", "return 1 ~= 2"},
+  {"elif_keyword", "local x=2; if x==1 then return 1 elif x==2 then return 2 else return 3 end"},
+  {"elseif_keyword", "local x=2; if x==1 then return 1 elseif x==2 then return 2 else return 3 end"},
+  {"bit_and", "return 6 & 3"},
+  {"bit_or", "return 6 | 3"},
+  {"bit_xor", "return 6 ^ 3"},
+  {"bit_not", "return ~6"},
+  {"hex_number", "return 0x2a"},
+  {"fraction_number", "return 1.5"},
+  {"hash_length", "local t={1,2}; return #t"},
+  {"table_getn", "local t={1,2}; return table.getn(t)"},
+  {"generic_table_for", "local s=0; for k,v in {4,5} do s=s+v end; return s"}
+}
+
+print("DIALECT|started")
+local i = 1
+while cases[i] != nil do
+  local name = cases[i][1]
+  local chunk, err = _loadBuf(cases[i][2], name)
+  if chunk == nil then
+    print("DIALECT|" .. name .. "|compile_error|" .. _str(err))
+  else
+    local ok, value = _pCall(chunk)
+    if ok then
+      print("DIALECT|" .. name .. "|ok|" .. _str(value))
+    else
+      print("DIALECT|" .. name .. "|runtime_error|" .. _str(value))
+    end
+  end
+  i = i + 1
+end
+print("DIALECT|complete|" .. _str(i-1))
+
+_clearScr(0, 0, 0)
+_drawText("Dialect probe finished", 8, 8, 255, 255, 255)
+_dispUp(0, 0, 240, 320)
+
+def dealevent(code, p0, p1)
+  print("DIALECT_EVENT|" .. _str(code) .. "|" .. _str(p0) .. "|" .. _str(p1))
+  return 0
+end
